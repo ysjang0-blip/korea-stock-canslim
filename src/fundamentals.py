@@ -169,6 +169,7 @@ class Snapshot:
     consensus_date: str = ""
     summary: str = ""                   # 기업 개요
     deal_trend: pd.DataFrame = field(default_factory=pd.DataFrame)
+    researches: list = field(default_factory=list)  # 증권사 리포트 (CANSLIM N 보조 근거)
 
     @property
     def change_pct(self) -> float | None:
@@ -245,6 +246,7 @@ def parse_snapshot(payload: dict, ref_code: str = "", ref_name: str = "") -> Sna
         recomm_mean=to_number(consensus.get("recommMean")),
         consensus_date=str(consensus.get("createDate", "")),
         deal_trend=deal_df,
+        researches=payload.get("researches") or [],
     )
 
 

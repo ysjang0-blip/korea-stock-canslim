@@ -1,11 +1,14 @@
 """CANSLIM 7개 항목 판정 테스트."""
 
+import datetime as dt
+
 import pandas as pd
 import pytest
 
-from src.canslim import analyze, relative_strength, weighted_return
+from src.canslim import analyze, days_since_new_high, relative_strength, weighted_return
 from src.fundamentals import parse_finance, parse_snapshot
 from src.models import Verdict
+from src.newness import Newness, NewsItem
 from src.valuation import compute_growth
 from tests.conftest import (
     SAMSUNG_A_EPS, SAMSUNG_A_PERIODS, SAMSUNG_Q_EPS, SAMSUNG_Q_PERIODS,
@@ -17,9 +20,19 @@ def item(result, letter):
     return next(i for i in result.items if i.letter == letter)
 
 
-def run(snapshot, quarterly, annual, stock_df, index_df, index_name="KOSPI"):
+def make_newness(*categories, scanned=20):
+    """새로운 재료가 있는(또는 없는) 상태를 만든다."""
+    items = [
+        NewsItem(category=c, title=f"{c} 관련 공시", date=dt.date(2026, 7, 1), source="공시")
+        for c in categories
+    ]
+    return Newness(items=items, scanned=scanned, window_days=180, available=True)
+
+
+def run(snapshot, quarterly, annual, stock_df, index_df, index_name="KOSPI", newness=None):
     growth = compute_growth(quarterly, annual)
-    result, _ = analyze(snapshot, quarterly, annual, growth, stock_df, index_df, index_name)
+    result, _ = analyze(snapshot, quarterly, annual, growth, stock_df, index_df, index_name,
+                        newness=newness if newness is not None else make_newness("수주·공급계약"))
     return result
 
 
@@ -81,19 +94,48 @@ class Test각항목:
         assert a.verdict is Verdict.FAIL
         assert "기준 미달" in a.evidence
 
-    def test_N_52주_최고가_대비_위치로_판정한다(self, snapshot, quarterly, annual,
-                                        rising_stock, flat_index):
-        result = run(snapshot, quarterly, annual, rising_stock, flat_index)
+    def test_N_신고가와_새로운_재료를_모두_봐야_합격(self, quarterly, annual,
+                                            rising_stock, flat_index):
+        """오닐의 N 은 New — 신고가 하나만으로 판정하지 않는다."""
+        snap = parse_snapshot(make_integration(totals={"highPriceOf52Weeks": "260,000"}))
+        result = run(snap, quarterly, annual, rising_stock, flat_index,
+                     newness=make_newness("신제품·신사업"))
         n = item(result, "N")
+        assert n.verdict is Verdict.PASS
+        assert n.letter == "N" and "새로운" in n.name       # '신고가'가 아니다
+        assert "신제품·신사업" in n.evidence
+
+    def test_N_신고가여도_재료가_없으면_불합격(self, quarterly, annual,
+                                     rising_stock, flat_index):
+        snap = parse_snapshot(make_integration(totals={"highPriceOf52Weeks": "260,000"}))
+        result = run(snap, quarterly, annual, rising_stock, flat_index,
+                     newness=Newness(items=[], scanned=30, available=True))
+        n = item(result, "N")
+        assert n.verdict is Verdict.FAIL
+        assert "재료 없음" in n.actual
+
+    def test_N_재료가_있어도_신고가에서_멀면_불합격(self, snapshot, quarterly, annual,
+                                        rising_stock, flat_index):
         # 254,000 / 380,000 = 67% → 85% 기준 미달
+        result = run(snapshot, quarterly, annual, rising_stock, flat_index,
+                     newness=make_newness("수주·공급계약"))
+        n = item(result, "N")
         assert n.verdict is Verdict.FAIL
         assert "67%" in n.actual
 
-    def test_N_신고가_부근이면_합격(self, quarterly, annual, rising_stock, flat_index):
-        payload = make_integration(totals={"highPriceOf52Weeks": "260,000"})
-        snap = parse_snapshot(payload)
-        result = run(snap, quarterly, annual, rising_stock, flat_index)
-        assert item(result, "N").verdict is Verdict.PASS
+    def test_N_재료를_확인할_수_없으면_판단불가(self, quarterly, annual,
+                                     rising_stock, flat_index):
+        """공시·뉴스를 못 받아왔을 때 '재료 없음'으로 단정하지 않는다."""
+        snap = parse_snapshot(make_integration(totals={"highPriceOf52Weeks": "260,000"}))
+        result = run(snap, quarterly, annual, rising_stock, flat_index,
+                     newness=Newness(items=[], scanned=0, available=False))
+        assert item(result, "N").verdict is Verdict.UNKNOWN
+
+    def test_N_신고가_갱신_시점을_알려준다(self, quarterly, annual, flat_index):
+        snap = parse_snapshot(make_integration(totals={"highPriceOf52Weeks": "260,000"}))
+        rising = make_ohlcv([100.0 + i for i in range(300)])  # 마지막 날이 최고가
+        result = run(snap, quarterly, annual, rising, flat_index)
+        assert "신고가를 방금 갱신" in item(result, "N").evidence
 
     def test_S_거래량이_급증하면_합격(self, snapshot, quarterly, annual,
                                 rising_stock, flat_index):
@@ -153,6 +195,17 @@ class Test각항목:
         m = item(result, "M")
         assert m.verdict is Verdict.FAIL
         assert "50일선 아래" in m.actual
+
+
+class Test신고가갱신:
+    def test_마지막_날이_최고가면_0(self):
+        assert days_since_new_high(pd.Series([1.0, 2.0, 3.0])) == 0
+
+    def test_며칠_전에_갱신했는지_센다(self):
+        assert days_since_new_high(pd.Series([1.0, 9.0, 3.0, 2.0])) == 2
+
+    def test_데이터가_모자라면_None(self):
+        assert days_since_new_high(pd.Series([1.0])) is None
 
 
 class Test종합:

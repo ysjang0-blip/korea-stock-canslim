@@ -20,6 +20,7 @@ import pandas as pd
 
 from .fundamentals import FinancialTable, Snapshot
 from .models import CanslimItem, CanslimResult, Verdict
+from .newness import Newness
 from .prices import moving_average, pct_return
 from .valuation import GrowthRates
 
@@ -116,21 +117,81 @@ def _item_a(growth: GrowthRates, roe: float | None) -> CanslimItem:
                        _verdict(growth_ok and roe >= ROE_MIN), evidence)
 
 
-def _item_n(snap: Snapshot) -> CanslimItem:
-    criterion = f"현재가가 52주 최고가의 {NEAR_HIGH_RATIO:.0%} 이상"
-    if not snap.price or not snap.high_52w:
-        return CanslimItem("N", "신고가 근접", criterion, "—", Verdict.UNKNOWN, "가격 데이터 없음")
+def days_since_new_high(close: pd.Series, window: int = 252) -> int | None:
+    """52주 신고가를 며칠 전에 갱신했는지 (거래일 기준). 갱신 이력이 없으면 None."""
+    series = close.dropna()
+    if len(series) < 2:
+        return None
+    recent = series.iloc[-window:] if len(series) > window else series
+    peak_position = int(recent.to_numpy().argmax())
+    return len(recent) - 1 - peak_position
 
+
+def _item_n(snap: Snapshot, stock: pd.DataFrame, newness: Newness | None) -> CanslimItem:
+    """N = New. 신고가만이 아니라 '무엇이 새로워졌는가'를 함께 본다.
+
+    오닐의 N 은 신제품·신규 서비스·새 경영진·새로운 산업 환경, 그리고 그 결과로 나타나는
+    신고가를 모두 가리킨다. 주가는 결과이고 새로운 재료가 원인이므로 둘 다 확인한다.
+    """
+    criterion = f"새로운 재료(신제품·수주·경영진 등) + 현재가가 52주 최고가의 {NEAR_HIGH_RATIO:.0%} 이상"
+    name = "새로운 변화"
+
+    if not snap.price or not snap.high_52w:
+        return CanslimItem("N", name, criterion, "—", Verdict.UNKNOWN, "가격 데이터가 없습니다")
+
+    # ── ① 신고가 (New price high)
     ratio = snap.price / snap.high_52w
+    high_ok = ratio >= NEAR_HIGH_RATIO
     gap = (1 - ratio) * 100
-    evidence = (
-        f"현재 {snap.price:,.0f}원 / 52주 최고 {snap.high_52w:,.0f}원 "
-        f"(최고가 대비 -{gap:,.1f}%) · 52주 최저 {snap.low_52w:,.0f}원"
-        if snap.low_52w else f"현재 {snap.price:,.0f}원 / 52주 최고 {snap.high_52w:,.0f}원"
+    price_part = (
+        f"현재 {snap.price:,.0f}원 / 52주 최고 {snap.high_52w:,.0f}원"
+        f"(대비 -{gap:,.1f}%)"
     )
-    evidence += " ※ '신제품·신경영' 같은 질적 요소는 자동 판정 대상이 아닙니다"
-    return CanslimItem("N", "신고가 근접", criterion, f"최고가의 {ratio:.0%}",
-                       _verdict(ratio >= NEAR_HIGH_RATIO), evidence)
+    if "close" in stock:
+        since = days_since_new_high(stock["close"])
+        if since is not None:
+            price_part += (
+                " · 신고가를 방금 갱신했습니다" if since == 0
+                else f" · 마지막 신고가 갱신은 {since}거래일 전"
+            )
+
+    # ── ② 새로운 재료 (New product / management / industry)
+    if newness is None or not newness.available:
+        material_ok = None
+        material_part = "공시·뉴스를 불러오지 못해 새로운 재료를 확인할 수 없었습니다"
+    elif newness.found:
+        material_ok = True
+        listed = " / ".join(
+            f"[{i.category}] {i.title}({i.date_text}, {i.source})" for i in newness.top(3)
+        )
+        material_part = (
+            f"최근 {newness.window_days}일 새 재료 {len(newness.items)}건 "
+            f"— {', '.join(newness.categories)} · {listed}"
+        )
+    else:
+        material_ok = False
+        material_part = (
+            f"최근 {newness.window_days}일 공시·뉴스 {newness.scanned}건을 훑었으나 "
+            f"신제품·수주·증설·경영진 변경 같은 새로운 재료를 찾지 못했습니다"
+        )
+
+    if material_ok is None:
+        verdict = _verdict(high_ok) if high_ok is False else Verdict.UNKNOWN
+        actual = f"신고가 {ratio:.0%} · 재료 확인불가"
+    else:
+        verdict = _verdict(high_ok and material_ok)
+        actual = (
+            f"신고가 {ratio:.0%} {'✓' if high_ok else '✗'} · "
+            f"재료 {'있음 ✓' if material_ok else '없음 ✗'}"
+        )
+
+    evidence = (
+        f"① 신고가 — {price_part}. "
+        f"② 새로운 재료 — {material_part}. "
+        "※ 재료는 공시·뉴스·리포트 제목을 키워드로 자동 분류한 것이라 사람의 판단을 대신하지 못합니다. "
+        "위 제목을 직접 읽어보고 판단하세요."
+    )
+    return CanslimItem("N", name, criterion, actual, verdict, evidence)
 
 
 def _item_s(stock: pd.DataFrame, snap: Snapshot) -> CanslimItem:
@@ -238,6 +299,7 @@ def analyze(
     stock_df: pd.DataFrame,
     index_df: pd.DataFrame,
     index_name: str = "KOSPI",
+    newness: Newness | None = None,
 ) -> tuple[CanslimResult, RelativeStrength]:
     latest_roe = next(
         (quarterly.value("ROE", p.key) for p in reversed(quarterly.actual_periods())
@@ -249,7 +311,7 @@ def analyze(
     result = CanslimResult(items=[
         _item_c(growth),
         _item_a(growth, latest_roe),
-        _item_n(snap),
+        _item_n(snap, stock_df, newness),
         _item_s(stock_df, snap),
         _item_l(rs, index_name),
         _item_i(stock_df, snap),

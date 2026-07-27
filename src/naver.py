@@ -134,6 +134,25 @@ def finance(code: str, period: str, ttl: int = DEFAULT_TTL) -> dict:
     return fetch_json(f"https://m.stock.naver.com/api/stock/{code}/finance/{period}", ttl=ttl)
 
 
+def disclosures(code: str, size: int = 60, ttl: int = 6 * 60 * 60) -> list:
+    """공시 목록 (KOSCOM). CANSLIM 의 N — '새로운 재료' 판정에 쓴다."""
+    payload = fetch_json(
+        f"https://m.stock.naver.com/api/stock/{code}/disclosure?pageSize={size}&page=1", ttl=ttl
+    )
+    return payload if isinstance(payload, list) else []
+
+
+def news(code: str, size: int = 30, ttl: int = 6 * 60 * 60) -> list:
+    """종목 뉴스. 응답은 묶음(cluster) 배열이라 기사만 펴서 돌려준다."""
+    payload = fetch_json(
+        f"https://m.stock.naver.com/api/news/stock/{code}?pageSize={size}&page=1", ttl=ttl
+    )
+    articles: list = []
+    for cluster in payload if isinstance(payload, list) else []:
+        articles.extend((cluster or {}).get("items", []))
+    return articles
+
+
 def autocomplete(query: str, ttl: int = 7 * DEFAULT_TTL) -> dict:
     """종목명 자동완성 검색."""
     return fetch_json(

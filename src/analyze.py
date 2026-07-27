@@ -6,9 +6,10 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from . import canslim, fundamentals, prices, tickers, valuation
+from . import canslim, fundamentals, newness as newness_mod, prices, tickers, valuation
 from .fundamentals import FinancialTable, Snapshot
 from .models import CanslimResult
+from .newness import Newness
 from .tickers import StockRef
 from .valuation import ValuationResult
 
@@ -26,6 +27,7 @@ class Analysis:
     valuation: ValuationResult
     canslim: CanslimResult
     rs: canslim.RelativeStrength
+    newness: Newness
     stock_df: pd.DataFrame
     index_df: pd.DataFrame
     index_name: str
@@ -45,9 +47,11 @@ def run_for(ref: StockRef) -> Analysis:
     stock_df = prices.load_ohlcv(ref.code)
     index_df = prices.load_ohlcv(index_name)
 
+    fresh = newness_mod.load(ref.code, researches=snap.researches)
+
     val = valuation.compute_valuation(snap, quarterly, annual)
     cans, rs = canslim.analyze(
-        snap, quarterly, annual, val.growth, stock_df, index_df, index_name
+        snap, quarterly, annual, val.growth, stock_df, index_df, index_name, newness=fresh
     )
 
     return Analysis(
@@ -58,6 +62,7 @@ def run_for(ref: StockRef) -> Analysis:
         valuation=val,
         canslim=cans,
         rs=rs,
+        newness=fresh,
         stock_df=stock_df,
         index_df=index_df,
         index_name=index_name,

@@ -88,3 +88,37 @@ class Test비교지수:
     def test_그_외에는_KOSPI(self):
         assert market_symbol("코스피") == "KOSPI"
         assert market_symbol(None) == "KOSPI"
+
+
+class Test완결거래일:
+    """장중의 부분 거래량이 판정에 섞이지 않아야 한다."""
+
+    def _df(self):
+        from tests.conftest import make_ohlcv
+        return make_ohlcv([100, 101, 102], start="2026-08-05")  # 마지막 행 = 2026-08-07
+
+    def test_장중이면_오늘_행을_뺀다(self):
+        import datetime as dt
+        from src.prices import KST, complete_sessions
+        now = dt.datetime(2026, 8, 7, 10, 30, tzinfo=KST)  # 장중 10:30
+        out = complete_sessions(self._df(), now=now)
+        assert len(out) == 2
+        assert out["date"].iloc[-1] == pd.Timestamp("2026-08-06")
+
+    def test_장_마감_후에는_오늘_행을_남긴다(self):
+        import datetime as dt
+        from src.prices import KST, complete_sessions
+        now = dt.datetime(2026, 8, 7, 16, 0, tzinfo=KST)  # 마감(15:30) 후
+        out = complete_sessions(self._df(), now=now)
+        assert len(out) == 3
+
+    def test_마지막_행이_과거면_그대로(self):
+        import datetime as dt
+        from src.prices import KST, complete_sessions
+        now = dt.datetime(2026, 8, 9, 10, 0, tzinfo=KST)  # 주말 — 마지막 행은 8/7
+        out = complete_sessions(self._df(), now=now)
+        assert len(out) == 3
+
+    def test_빈_프레임도_죽지_않는다(self):
+        from src.prices import complete_sessions
+        assert complete_sessions(pd.DataFrame()).empty

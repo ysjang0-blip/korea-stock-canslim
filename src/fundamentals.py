@@ -87,10 +87,15 @@ class Period:
 
 @dataclass
 class FinancialTable:
-    """기간(오름차순)과 라벨별 값. 값 단위는 네이버 원본 그대로."""
+    """기간(오름차순)과 라벨별 값. 값 단위는 원본 그대로.
+
+    money_unit: 매출액 같은 금액 행을 통화 기본 단위로 바꾸는 배수.
+    네이버(한국)는 억원이라 1억, 야후(미국)는 달러 그대로라 1.
+    """
 
     periods: list[Period] = field(default_factory=list)
     rows: dict[str, dict[str, float | None]] = field(default_factory=dict)
+    money_unit: float = EOK
 
     def value(self, label: str, key: str) -> float | None:
         return self.rows.get(label, {}).get(key)
@@ -170,6 +175,9 @@ class Snapshot:
     summary: str = ""                   # 기업 개요
     deal_trend: pd.DataFrame = field(default_factory=pd.DataFrame)
     researches: list = field(default_factory=list)  # 증권사 리포트 (CANSLIM N 보조 근거)
+    currency: str = "KRW"               # 'KRW' 또는 'USD'
+    source_name: str = "네이버"          # 교차검증 문구에 쓸 출처 이름
+    inst_holding_pct: float | None = None  # 기관 보유 비중 % (미국 전용)
 
     @property
     def change_pct(self) -> float | None:
@@ -184,6 +192,30 @@ class Snapshot:
         if not self.target_price or not self.price:
             return None
         return (self.target_price / self.price - 1.0) * 100.0
+
+    @property
+    def price_date_label(self) -> str:
+        """'20260807' → '2026-08-07'."""
+        d = self.price_date
+        return f"{d[:4]}-{d[4:6]}-{d[6:8]}" if len(d) == 8 else d
+
+    def money(self, value: float | None, digits: int | None = None) -> str:
+        """통화에 맞는 금액 문자열. 원화는 정수, 달러는 소수 2자리 기본."""
+        if value is None:
+            return "—"
+        if self.currency == "USD":
+            return f"${value:,.{2 if digits is None else digits}f}"
+        return f"{value:,.{0 if digits is None else digits}f}원"
+
+    def money_big(self, value: float | None) -> str:
+        """시가총액처럼 큰 금액. 원화는 조원, 달러는 억/조 달러."""
+        if value is None:
+            return "—"
+        if self.currency == "USD":
+            if value >= 1e12:
+                return f"{value / 1e12:,.2f}조 달러"
+            return f"{value / 1e8:,.0f}억 달러"
+        return f"{value / 1e12:,.1f}조원"
 
 
 def _deal_trend_frame(rows: list[dict]) -> pd.DataFrame:

@@ -207,3 +207,56 @@ class Test예외상황:
         result = compute_valuation(parse_snapshot(make_integration()), empty, empty)
         assert len(result.columns) == 4
         assert all(not c.per.is_ok for c in result.columns)
+
+
+class Test극단값처리:
+    def test_성장률_100퍼센트_초과면_PEG_계산불가(self, quarterly, annual):
+        """삼성 fixture의 선행 성장률은 +610% — PEG 0.01 은 정보가 아니라 소음이다."""
+        snap = parse_snapshot(make_integration())
+        result = compute_valuation(snap, quarterly, annual)
+        q1 = column(result, "202606")
+        assert q1.peg.status is Status.NOT_APPLICABLE
+        assert "극단" in q1.peg.note
+
+    def test_성장률이_보통이면_PEG_정상(self, quarterly, annual):
+        """현재 열은 2년 CAGR 75.5% (<100%) → PEG 가 계산된다."""
+        snap = parse_snapshot(make_integration())
+        result = compute_valuation(snap, quarterly, annual)
+        cur = column(result, "current")
+        assert cur.peg.is_ok
+
+    def test_다음_분기_컨센서스_YoY(self, quarterly, annual):
+        g = compute_growth(quarterly, annual)
+        # 2026.06 컨센서스 10,625 vs 2025.06 실적 733
+        assert g.next_quarter_yoy.value == pytest.approx(10625 / 733 * 100 - 100, abs=0.05)
+        assert g.next_quarter_label == "2026.06"
+        assert g.latest_quarter_label == "2026.03"
+
+
+class TestQ2원본컨센서스:
+    """미국(야후)처럼 분기 컨센서스가 두 개면 역산 없이 원본을 쓴다."""
+
+    def _tables(self):
+        periods = SAMSUNG_Q_PERIODS + [("202609", True)]
+        eps = dict(SAMSUNG_Q_EPS, **{"202609": "11,000"})
+        rev = dict(SAMSUNG_Q_REVENUE, **{"202609": "1,800,000"})
+        quarterly = parse_finance(make_finance(periods, {"EPS": eps, "매출액": rev}))
+        annual = parse_finance(make_finance(
+            SAMSUNG_A_PERIODS, {"EPS": SAMSUNG_A_EPS, "매출액": SAMSUNG_A_REVENUE}))
+        return quarterly, annual
+
+    def test_Q2가_역산이_아니라_컨센서스로_표시된다(self):
+        quarterly, annual = self._tables()
+        snap = parse_snapshot(make_integration())
+        result = compute_valuation(snap, quarterly, annual)
+        q2 = column(result, "202609")
+        assert q2.source is Source.CONSENSUS
+        assert result.derived is None
+        # TTM EPS = 2,864 + 6,993 + 10,625 + 11,000
+        assert q2.eps_ttm.value == pytest.approx(2864 + 6993 + 10625 + 11000)
+
+    def test_현재_열_산출근거에_분기_범위가_붙는다(self):
+        quarterly, annual = self._tables()
+        snap = parse_snapshot(make_integration())
+        result = compute_valuation(snap, quarterly, annual)
+        assert "2025.06~2026.03" in column(result, "current").note

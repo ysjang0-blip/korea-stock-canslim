@@ -18,39 +18,48 @@ import html
 import re
 from dataclasses import dataclass, field
 
-# 먼저 걸러낼 것 — 새로운 재료가 아니거나 오히려 악재인 공시
+# 먼저 걸러낼 것 — 새로운 재료가 아니거나 오히려 악재인 공시 (한국어 + 영어)
 NOISE = (
     "풍문", "해명", "조회공시", "불성실공시", "관리종목", "투자주의", "투자경고", "투자위험",
     "가격제한폭", "상장폐지", "감사의견", "소송", "횡령", "배임", "부도", "회생절차",
     "자기주식 처분", "자기주식처분", "정정", "기재정정", "특정증권등 소유상황",
     "주식등의 대량보유", "결산실적공시", "매출액또는손익구조",
+    "lawsuit", "class action", "investigation", "recall", "layoff", "delisting",
+    "short seller", "downgrade",
 )
 
-# (분류 이름, 키워드들) — 순서대로 검사한다
+# (분류 이름, 키워드들) — 순서대로 검사한다 (한국어 + 영어, 대소문자 무시)
 CATEGORIES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("신제품·신사업", (
         "신제품", "신규 사업", "신규사업", "사업목적", "사업 목적", "출시", "런칭", "론칭",
         "개발 완료", "개발완료", "신규 브랜드", "진출", "양산", "상용화",
+        "launch", "unveil", "new product", "debut", "rollout", "enters",
     )),
     ("수주·공급계약", (
         "단일판매", "공급계약", "수주", "계약 체결", "계약체결", "납품", "공급 계약",
+        "contract", "supply deal", "wins deal", "order from", "partnership", "agreement",
     )),
     ("설비투자·증설", (
         "시설투자", "신규 시설", "증설", "신공장", "유형자산 취득", "생산능력",
+        "new plant", "new factory", "capacity expansion", "gigafactory", "expansion",
     )),
     ("인수·합병", (
         "타법인 주식", "출자증권 취득", "합병", "영업양수", "영업 양수", "인수", "분할",
         "지분 취득", "자회사 편입",
+        "acquisition", "acquires", "merger", "buyout", "takeover", "stake in",
     )),
     ("경영진 변경", (
         "대표이사 변경", "대표이사변경", "최대주주 변경", "최대주주변경", "임원 변경",
         "경영권", "각자대표", "신규 선임",
+        "new ceo", "names ceo", "appoints", "new cfo", "new chief",
     )),
     ("인허가·기술", (
         "임상", "품목허가", "승인", "인증", "특허", "국책과제", "기술이전", "라이선스",
+        "fda approval", "approval", "patent", "clearance", "breakthrough", "clinical",
     )),
     ("자사주 매입", (
         "자기주식 취득", "자기주식취득", "자사주 매입",
+        "buyback", "share repurchase",
     )),
 )
 
@@ -136,14 +145,14 @@ def parse_date(raw) -> dt.date | None:
 
 
 def classify(title: str) -> str | None:
-    """제목 하나를 분류한다. 잡음이거나 해당 없으면 None."""
+    """제목 하나를 분류한다. 잡음이거나 해당 없으면 None. 영문은 대소문자를 가리지 않는다."""
     if not title:
         return None
-    text = title.replace(" ", "")
-    if any(noise.replace(" ", "") in text for noise in NOISE):
+    text = title.replace(" ", "").lower()
+    if any(noise.replace(" ", "").lower() in text for noise in NOISE):
         return None
     for name, keywords in CATEGORIES:
-        if any(keyword.replace(" ", "") in text for keyword in keywords):
+        if any(keyword.replace(" ", "").lower() in text for keyword in keywords):
             return name
     return None
 

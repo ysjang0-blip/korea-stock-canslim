@@ -122,8 +122,8 @@ def fetch_json(url: str, ttl: int = DEFAULT_TTL) -> Any:
 
 # ---------------------------------------------------------------- 엔드포인트
 
-def integration(code: str, ttl: int = 60 * 60) -> dict:
-    """현재가·PER·추정EPS·52주 고저·외인소진율·목표주가 등 요약 (시세 포함이라 1시간 캐시)."""
+def integration(code: str, ttl: int = 10 * 60) -> dict:
+    """현재가·PER·추정EPS·52주 고저·외인소진율·목표주가 등 요약 (시세 포함이라 10분 캐시)."""
     return fetch_json(f"https://m.stock.naver.com/api/stock/{code}/integration", ttl=ttl)
 
 

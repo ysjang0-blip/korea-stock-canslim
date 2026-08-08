@@ -55,13 +55,16 @@ def _base(fig: go.Figure, height: int = 320, legend: bool = False) -> go.Figure:
     return fig
 
 
-def price_chart(df: pd.DataFrame, high_52w: float | None, low_52w: float | None) -> go.Figure:
+def price_chart(df: pd.DataFrame, high_52w: float | None, low_52w: float | None,
+                currency: str = "KRW") -> go.Figure:
     """주가 흐름. 단일 계열이므로 범례 없이 제목이 계열을 설명한다."""
+    usd = currency == "USD"
+    unit, digits = ("$", 2) if usd else ("원", 0)
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=df["date"], y=df["close"], mode="lines", name="종가",
         line=dict(color=C["s1"], width=2),
-        hovertemplate="%{x|%Y-%m-%d}<br>종가 %{y:,.0f}원<extra></extra>",
+        hovertemplate="%{x|%Y-%m-%d}<br>종가 %{y:,." + str(digits) + "f}" + unit + "<extra></extra>",
     ))
 
     # 라벨은 선 위쪽·그림 안쪽에 붙인다.
@@ -70,21 +73,31 @@ def price_chart(df: pd.DataFrame, high_52w: float | None, low_52w: float | None)
         if value:
             fig.add_hline(
                 y=value, line=dict(color=C["muted"], width=1, dash=dash),
-                annotation_text=f"{label} {value:,.0f}원", annotation_position="top left",
+                annotation_text=f"{label} {value:,.{digits}f}{unit}",
+                annotation_position="top left",
                 annotation_font=dict(color=C["muted"], size=11),
                 annotation_bgcolor=C["surface"], annotation_borderpad=2,
             )
-    fig.update_yaxes(tickformat=",.0f", ticksuffix="원")
+    fig.update_yaxes(tickformat=f",.{digits}f", ticksuffix=unit)
     return _base(fig, height=300)
 
 
 def earnings_chart(
-    quarterly, derived_key: str | None, derived_value: float | None, label: str
+    quarterly, derived_key: str | None, derived_value: float | None, label: str,
+    currency: str = "KRW",
 ) -> go.Figure:
     """분기 실적 추이. 출처(확정/컨센서스/역산)를 색으로 구분하고 범례를 단다.
 
     EPS와 매출액을 한 그림에 겹치지 않는다 — 축이 두 개가 되기 때문이다.
+    미국 매출액은 달러 원값이라 '억 달러'로 축소해 그린다.
     """
+    usd = currency == "USD"
+    scale = 1e8 if (usd and label != "EPS") else 1.0
+    if usd:
+        unit, digits = ("$", 2) if label == "EPS" else ("억$", 1)
+    else:
+        unit, digits = ("원", 0) if label == "EPS" else ("억원", 0)
+
     buckets: dict[Source, dict[str, list]] = {
         s: {"x": [], "y": []} for s in (Source.ACTUAL, Source.CONSENSUS, Source.DERIVED)
     }
@@ -94,13 +107,12 @@ def earnings_chart(
             continue
         source = Source.CONSENSUS if period.is_consensus else Source.ACTUAL
         buckets[source]["x"].append(period.label)
-        buckets[source]["y"].append(value)
+        buckets[source]["y"].append(value / scale)
 
     if derived_key and derived_value is not None:
         buckets[Source.DERIVED]["x"].append(f"{derived_key[:4]}.{derived_key[4:]}")
-        buckets[Source.DERIVED]["y"].append(derived_value)
+        buckets[Source.DERIVED]["y"].append(derived_value / scale)
 
-    unit = "원" if label == "EPS" else "억원"
     fig = go.Figure()
     for source, data in buckets.items():
         if not data["x"]:
@@ -110,14 +122,15 @@ def earnings_chart(
             marker=dict(color=SOURCE_COLOR[source],
                         line=dict(color=C["surface"], width=2)),  # 막대 사이 2px 간격
             offsetgroup="q",
-            text=[f"{v:,.0f}" for v in data["y"]],
+            text=[f"{v:,.{digits}f}" for v in data["y"]],
             textposition="outside",
             textfont=dict(color=C["ink2"], size=11),
-            hovertemplate="%{x}<br>" + label + " %{y:,.0f}" + unit + "<extra>%{data.name}</extra>",
+            hovertemplate="%{x}<br>" + label + " %{y:,." + str(digits) + "f}" + unit
+                          + "<extra>%{data.name}</extra>",
         ))
 
     fig.update_layout(barmode="group", bargap=0.35)
-    fig.update_yaxes(tickformat=",.0f", ticksuffix=unit)
+    fig.update_yaxes(tickformat=f",.{digits}f", ticksuffix=unit)
     fig = _base(fig, height=320, legend=True)
     # '2025.03' 을 숫자 2025.03 으로 읽어 막대가 흩어지는 것을 막는다
     fig.update_xaxes(type="category")

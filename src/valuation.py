@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .fundamentals import EOK, FinancialTable, Period, Snapshot
+from .fundamentals import FinancialTable, Period, Snapshot
 from .models import Metric, Source
 
 EPS = "EPS"
@@ -24,6 +24,10 @@ REVENUE = "매출액"
 ROE_ROW = "ROE"
 
 QUARTER_MONTHS = (3, 6, 9, 12)
+
+# PEG는 성장률 20~50% 구간을 염두에 두고 만들어진 지표다.
+# 성장률이 이보다 극단적으로 크면 PEG가 0에 붙어 아무 정보도 주지 못한다.
+PEG_GROWTH_CAP = 100.0
 
 
 def next_quarter_key(key: str) -> str:
@@ -59,6 +63,9 @@ class GrowthRates:
     annual_cagr_years: int = 0
     forward_annual: Metric = field(default_factory=Metric.no_data)  # 연간 컨센서스 성장률
     prev_quarter_yoy: Metric = field(default_factory=Metric.no_data)  # 가속 여부 확인용
+    next_quarter_yoy: Metric = field(default_factory=Metric.no_data)  # 다음 분기 컨센서스 전년동기비
+    latest_quarter_label: str = ""     # 최신 확정 분기 (예: '2026.03')
+    next_quarter_label: str = ""       # 다음 컨센서스 분기 (예: '2026.06')
 
 
 def compute_growth(quarterly: FinancialTable, annual: FinancialTable) -> GrowthRates:
@@ -106,12 +113,33 @@ def compute_growth(quarterly: FinancialTable, annual: FinancialTable) -> GrowthR
             else Metric.na("직전 연도가 적자라 증감률이 성립하지 않음")
         )
 
+    # 다음 분기(컨센서스) 전년동기비 — 확정 실적이 한 분기 늦게 반영되는 것을 보완하는 참고치
+    next_q = Metric.no_data("분기 컨센서스 없음")
+    next_label = ""
+    cons_q = [p for p in quarterly.consensus_periods() if quarterly.value(EPS, p.key) is not None]
+    if cons_q:
+        target = cons_q[0]
+        next_label = target.label
+        ago_key = f"{target.year - 1}{target.month:02d}"
+        now, ago = quarterly.value(EPS, target.key), quarterly.value(EPS, ago_key)
+        rate = yoy(now, ago)
+        if ago is None:
+            next_q = Metric.no_data("전년 동기 데이터 없음")
+        elif rate is None:
+            next_q = Metric.na("전년 동기가 적자라 증감률이 성립하지 않음")
+        else:
+            next_q = Metric.ok(rate, Source.CONSENSUS,
+                               f"{target.label} 컨센서스 vs {target.year - 1}.{target.month:02d}")
+
     return GrowthRates(
         quarter_yoy=q_yoy(0),
         annual_cagr=annual_metric,
         annual_cagr_years=years,
         forward_annual=forward,
         prev_quarter_yoy=q_yoy(1),
+        next_quarter_yoy=next_q,
+        latest_quarter_label=actual_q[-1].label if actual_q else "",
+        next_quarter_label=next_label,
     )
 
 
@@ -222,6 +250,9 @@ def _peg(per: Metric, growth: Metric) -> Metric:
         return Metric.no_data("성장률을 구할 수 없음")
     if growth.value <= 0:
         return Metric.na("성장률이 0 이하라 PEG가 의미를 갖지 않음")
+    if growth.value > PEG_GROWTH_CAP:
+        # 예: 성장률 +630%면 PEG가 0.01이 되어 '싸다'가 아니라 '무의미'다
+        return Metric.na(f"성장률 {growth.value:+,.0f}%가 극단적이라 PEG가 정보를 주지 못함")
     return Metric.ok(per.value / growth.value)
 
 
@@ -240,6 +271,7 @@ def compute_valuation(
 ) -> ValuationResult:
     growth = compute_growth(quarterly, annual)
     price, cap, bps = snap.price, snap.market_cap, snap.bps
+    unit = quarterly.money_unit  # 매출액 → 통화 기본 단위 배수 (한국 억원=1e8, 미국 달러=1)
 
     actual = [p for p in quarterly.actual_periods() if quarterly.value(EPS, p.key) is not None]
     actual_keys = [p.key for p in actual]
@@ -253,7 +285,7 @@ def compute_valuation(
     cur_keys = actual_keys[-4:]
     cur_eps = ttm(EPS, cur_keys, []) if len(cur_keys) == 4 else None
     cur_rev = ttm(REVENUE, cur_keys, []) if len(cur_keys) == 4 else None
-    cur_rev_won = cur_rev * EOK if cur_rev is not None else None
+    cur_rev_won = cur_rev * unit if cur_rev is not None else None
 
     latest_roe = next(
         (quarterly.value(ROE_ROW, p.key) for p in reversed(actual)
@@ -261,11 +293,15 @@ def compute_valuation(
         None,
     )
     cur_per = _per(price, cur_eps)
+    cur_range = ""
+    if len(cur_keys) >= 2:
+        by_key = {p.key: p for p in actual}
+        cur_range = f" ({by_key[cur_keys[0]].label}~{by_key[cur_keys[-1]].label})"
     current = ValuationColumn(
         key="current",
         label="현재",
         source=Source.ACTUAL,
-        note=f"확정 실적 {len(cur_keys)}개 분기 합산" if cur_keys else "분기 데이터 부족",
+        note=f"확정 실적 {len(cur_keys)}개 분기 합산{cur_range}" if cur_keys else "분기 데이터 부족",
         eps_ttm=Metric.ok(cur_eps, Source.ACTUAL) if cur_eps is not None else Metric.no_data(),
         revenue_ttm=Metric.ok(cur_rev_won, Source.ACTUAL) if cur_rev_won is not None else Metric.no_data(),
         per=cur_per,
@@ -284,7 +320,7 @@ def compute_valuation(
         q1_rev = quarterly.value(REVENUE, q1.key)
         eps_ttm = ttm(EPS, actual_keys[-3:], [q1_eps])
         rev_ttm = ttm(REVENUE, actual_keys[-3:], [q1_rev])
-        rev_won = rev_ttm * EOK if rev_ttm is not None else None
+        rev_won = rev_ttm * unit if rev_ttm is not None else None
         per = _per(price, eps_ttm)
         # 컨센서스 '칸'은 있어도 애널리스트가 없으면 값이 비어 온다. 있는 척하지 않는다.
         covered = q1_eps is not None or q1_rev is not None
@@ -311,17 +347,43 @@ def compute_valuation(
             )
         )
 
-    # ── Q+2: 확정 2개 + 컨센서스 1개 + 역산 1개 ──────────────────────
+    # ── Q+2: 확정 2개 + 컨센서스 2개 ─────────────────────────────────
+    # 원본 컨센서스가 두 분기 이상 있으면 그대로 쓴다 (미국 데이터가 이 경우).
+    # 하나뿐이면(한국) 연간 컨센서스에서 역산한다.
     derived = None
-    if q1 is not None and len(actual_keys) >= 2:
+    q2_cons = cons_quarters[1] if len(cons_quarters) >= 2 else None
+    if q2_cons is not None and quarterly.value(EPS, q2_cons.key) is None:
+        q2_cons = None  # 칸만 있고 값이 없으면 없는 것
+    if q2_cons is None and q1 is not None and len(actual_keys) >= 2:
         derived = derive_quarter(quarterly, annual, q1.key, (EPS, REVENUE))
 
-    if derived is not None:
+    if q2_cons is not None and q1 is not None and len(actual_keys) >= 2:
+        q2_eps = quarterly.value(EPS, q2_cons.key)
+        q2_rev = quarterly.value(REVENUE, q2_cons.key)
+        eps_ttm = ttm(EPS, actual_keys[-2:], [quarterly.value(EPS, q1.key), q2_eps])
+        rev_ttm = ttm(REVENUE, actual_keys[-2:], [quarterly.value(REVENUE, q1.key), q2_rev])
+        rev_won = rev_ttm * unit if rev_ttm is not None else None
+        per = _per(price, eps_ttm)
+        columns.append(
+            ValuationColumn(
+                key=q2_cons.key,
+                label=f"Q+2 ({q2_cons.label})",
+                source=Source.CONSENSUS,
+                note="확정 2개 분기 + 컨센서스 2개 분기",
+                eps_ttm=Metric.ok(eps_ttm, Source.CONSENSUS) if eps_ttm is not None else Metric.no_data(),
+                revenue_ttm=Metric.ok(rev_won, Source.CONSENSUS) if rev_won is not None else Metric.no_data(),
+                per=per,
+                psr=_psr(cap, rev_won),
+                peg=_peg(per, growth.forward_annual),
+                roe=_roe_from_eps(eps_ttm, bps),
+            )
+        )
+    elif derived is not None:
         q2_eps = derived.values.get(EPS)
         q2_rev = derived.values.get(REVENUE)
         eps_ttm = ttm(EPS, actual_keys[-2:], [quarterly.value(EPS, q1.key), q2_eps])
         rev_ttm = ttm(REVENUE, actual_keys[-2:], [quarterly.value(REVENUE, q1.key), q2_rev])
-        rev_won = rev_ttm * EOK if rev_ttm is not None else None
+        rev_won = rev_ttm * unit if rev_ttm is not None else None
         per = _per(price, eps_ttm)
         label_period = f"{derived.key[:4]}.{derived.key[4:]}"
         columns.append(
@@ -352,7 +414,7 @@ def compute_valuation(
         cy = cons_years[0]
         eps_y = annual.value(EPS, cy.key)
         rev_y = annual.value(REVENUE, cy.key)
-        rev_won = rev_y * EOK if rev_y is not None else None
+        rev_won = rev_y * annual.money_unit if rev_y is not None else None
         per = _per(price, eps_y)
         roe_y = annual.value(ROE_ROW, cy.key)
         covered_y = eps_y is not None or rev_y is not None
@@ -380,12 +442,12 @@ def compute_valuation(
             )
         )
 
-    # ── 교차검증: 우리 계산이 네이버 값과 맞는가 ─────────────────────
+    # ── 교차검증: 우리 계산이 원본 제공값과 맞는가 ───────────────────
     check = "비교 불가"
     if current.per.is_ok and snap.per_naver:
         diff = current.per.value - snap.per_naver
         mark = "일치" if abs(diff) < 0.15 else "차이 있음"
-        check = f"자체계산 {current.per.value:.2f}배 / 네이버 {snap.per_naver:.2f}배 → {mark}"
+        check = f"자체계산 {current.per.value:.2f}배 / {snap.source_name} {snap.per_naver:.2f}배 → {mark}"
 
     return ValuationResult(
         columns=columns, growth=growth, derived=derived, per_cross_check=check

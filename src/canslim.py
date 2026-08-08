@@ -90,6 +90,18 @@ def _item_c(growth: GrowthRates) -> CanslimItem:
     if prev.is_ok:
         trend = "가속 중" if metric.value > prev.value else "둔화 중"
         evidence += f" · 직전 분기 {prev.value:+,.1f}% → 이번 {metric.value:+,.1f}% ({trend})"
+    if metric.value > 300:
+        evidence += " · ※ 전년 동기 EPS가 매우 낮아 증가율이 커 보이는 기저 효과일 수 있습니다"
+
+    # 확정실적이 한 분기 늦게 반영될 수 있음을 밝히고, 다음 분기 컨센서스를 참고로 붙인다
+    if growth.next_quarter_label:
+        evidence += (
+            f" · 최신 확정 분기는 {growth.latest_quarter_label}이며 "
+            f"{growth.next_quarter_label} 분기는 아직 컨센서스만 있습니다"
+        )
+        nxt = growth.next_quarter_yoy
+        if nxt.is_ok:
+            evidence += f" (컨센서스 기준 {nxt.value:+,.1f}%)"
     return CanslimItem("C", "최근 분기 실적", f"분기 EPS 전년동기비 +{QUARTER_GROWTH_MIN:.0f}% 이상",
                        f"{metric.value:+,.1f}%", _verdict(passed), evidence)
 
@@ -105,7 +117,7 @@ def _item_a(growth: GrowthRates, roe: float | None) -> CanslimItem:
 
     growth_ok = metric.value >= ANNUAL_GROWTH_MIN
     actual = f"EPS {years}년 CAGR {metric.value:+,.1f}%"
-    evidence = f"{metric.note}. 네이버가 연간 3개년만 제공해 {years}년 기준입니다"
+    evidence = f"{metric.note}. 확정 연간 데이터가 {years + 1}개년뿐이라 {years}년 CAGR 기준입니다"
 
     if roe is None:
         evidence += " · ROE 데이터 없어 성장률만으로 판정"
@@ -144,7 +156,7 @@ def _item_n(snap: Snapshot, stock: pd.DataFrame, newness: Newness | None) -> Can
     high_ok = ratio >= NEAR_HIGH_RATIO
     gap = (1 - ratio) * 100
     price_part = (
-        f"현재 {snap.price:,.0f}원 / 52주 최고 {snap.high_52w:,.0f}원"
+        f"현재 {snap.money(snap.price)} / 52주 최고 {snap.money(snap.high_52w)}"
         f"(대비 -{gap:,.1f}%)"
     )
     if "close" in stock:
@@ -195,21 +207,29 @@ def _item_n(snap: Snapshot, stock: pd.DataFrame, newness: Newness | None) -> Can
 
 
 def _item_s(stock: pd.DataFrame, snap: Snapshot) -> CanslimItem:
-    criterion = f"당일 거래량이 50일 평균의 {VOLUME_SURGE:.1f}배 이상"
+    """수급. 반드시 '완결된 거래일'의 거래량만 쓴다 — 장중 부분 거래량을
+    50일 평균과 비교하면 거의 항상 불합격으로 나오는 왜곡이 생긴다.
+    (완결 여부 처리는 analyze.run_for 에서 complete_sessions 로 이미 걸러져 온다)
+    """
+    criterion = f"최근 거래일 거래량이 50일 평균의 {VOLUME_SURGE:.1f}배 이상"
     vol = stock["volume"].dropna() if "volume" in stock else pd.Series(dtype=float)
     if len(vol) < 50:
         return CanslimItem("S", "수급", criterion, "—", Verdict.UNKNOWN, "거래량 데이터 50일 미만")
 
     avg50 = float(vol.iloc[-50:].mean())
-    today = float(vol.iloc[-1])
+    latest = float(vol.iloc[-1])
     avg5 = float(vol.iloc[-5:].mean())
     if avg50 <= 0:
         return CanslimItem("S", "수급", criterion, "—", Verdict.UNKNOWN, "평균 거래량 0")
 
-    ratio = today / avg50
-    cap_text = f"시가총액 {snap.market_cap / 1e12:,.1f}조원" if snap.market_cap else "시가총액 미상"
+    ratio = latest / avg50
+    day_label = ""
+    if "date" in stock:
+        last_date = stock["date"].loc[vol.index[-1]]
+        day_label = f"{last_date:%m/%d} "
+    cap_text = f"시가총액 {snap.money_big(snap.market_cap)}" if snap.market_cap else "시가총액 미상"
     evidence = (
-        f"당일 {today:,.0f}주 / 50일 평균 {avg50:,.0f}주 = {ratio:.2f}배 "
+        f"{day_label}거래량 {latest:,.0f}주 / 50일 평균 {avg50:,.0f}주 = {ratio:.2f}배 "
         f"· 최근 5일 평균은 {avg5 / avg50:.2f}배 · {cap_text} "
         f"※ 오닐이 중시하는 유통주식수(float)는 무료로 구할 수 없어 거래량으로 대체했습니다"
     )
@@ -241,6 +261,16 @@ def _item_i(stock: pd.DataFrame, snap: Snapshot) -> CanslimItem:
     criterion = f"외국인 소진율이 {FOREIGN_TREND_DAYS}거래일 전보다 상승"
     series = stock["foreign_rate"].dropna() if "foreign_rate" in stock else pd.Series(dtype=float)
     series = series[series > 0]
+
+    # 미국 종목: 소진율 시계열이 없다. 기관 보유 비중은 시점값이라 '증가 추세'를
+    # 판정할 수 없으므로 값만 보여주고 판단불가로 둔다.
+    if len(series) == 0 and snap.inst_holding_pct is not None:
+        return CanslimItem(
+            "I", "기관 수급", "기관 보유 비중 증가 (오닐 기준)",
+            f"보유 비중 {snap.inst_holding_pct:,.1f}%", Verdict.UNKNOWN,
+            f"기관 보유 비중 {snap.inst_holding_pct:,.1f}% — 야후는 현재 시점 값만 제공해 "
+            "'증가 중인지'를 판정할 수 없습니다. 수치만 참고하세요",
+        )
 
     if len(series) <= FOREIGN_TREND_DAYS:
         return CanslimItem("I", "기관·외국인 수급", criterion, "—", Verdict.UNKNOWN,

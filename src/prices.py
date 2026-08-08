@@ -88,6 +88,30 @@ def market_symbol(market_name: str | None) -> str:
     return "KOSPI"
 
 
+KST = dt.timezone(dt.timedelta(hours=9))
+KR_MARKET_CLOSE = dt.time(15, 30)
+
+
+def complete_sessions(
+    df: pd.DataFrame,
+    close_time: dt.time = KR_MARKET_CLOSE,
+    tz: dt.tzinfo = KST,
+    now: dt.datetime | None = None,
+) -> pd.DataFrame:
+    """마지막 행이 '아직 끝나지 않은 오늘 장'이면 제외한다.
+
+    장중의 부분 거래량을 50일 평균과 비교하면 거의 항상 '거래량 부족'으로 나온다.
+    수급(S) 같은 판정에는 완결된 거래일만 써야 한다.
+    """
+    if df.empty or "date" not in df:
+        return df
+    now = now or dt.datetime.now(tz)
+    last = df["date"].iloc[-1]
+    if last.date() == now.date() and now.time() < close_time:
+        return df.iloc[:-1].reset_index(drop=True)
+    return df
+
+
 def pct_return(close: pd.Series, trading_days: int) -> float | None:
     """trading_days 거래일 전 대비 수익률(%). 데이터가 모자라면 None."""
     s = close.dropna()

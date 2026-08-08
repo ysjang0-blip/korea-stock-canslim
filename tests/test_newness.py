@@ -168,3 +168,27 @@ class Test탐지:
             articles=[], researches=[], today=TODAY,
         )
         assert result.top(1)[0].date == dt.date(2026, 7, 20)
+
+
+class Test영문분류:
+    """미국 뉴스 제목 (야후) — 대소문자를 가리지 않는다."""
+
+    @pytest.mark.parametrize("title,expected", [
+        ("Apple Unveils New AI Chip For Data Centers", "신제품·신사업"),
+        ("Boeing wins $2 billion defense contract", "수주·공급계약"),
+        ("TSMC announces capacity expansion in Arizona", "설비투자·증설"),
+        ("Broadcom completes acquisition of software firm", "인수·합병"),
+        ("Intel names new CEO to lead turnaround", "경영진 변경"),
+        ("Biotech gets FDA approval for cancer drug", "인허가·기술"),
+        ("Apple announces $110 billion buyback", "자사주 매입"),
+    ])
+    def test_영문_재료를_분류한다(self, title, expected):
+        assert classify(title) == expected
+
+    @pytest.mark.parametrize("title", [
+        "Tesla faces class action lawsuit over autopilot claims",
+        "Chipmaker hit with SEC investigation",
+        "Analyst downgrade sends shares lower",
+    ])
+    def test_영문_잡음과_악재는_걸러낸다(self, title):
+        assert classify(title) is None

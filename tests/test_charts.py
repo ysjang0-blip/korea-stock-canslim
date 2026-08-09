@@ -85,3 +85,13 @@ class Test상대차트:
     def test_데이터가_한_줄이면_그리지_않는다(self):
         fig = charts.relative_chart(make_ohlcv([100.0]), make_ohlcv([100.0]), "KOSPI", "종목")
         assert len(fig.data) == 0
+
+    def test_기간을_바꾸면_그만큼만_그린다(self):
+        """3개월(63일)·6개월(126일) 전환 — 화면 라디오가 넘기는 days 값."""
+        stock = make_ohlcv([100.0 + i for i in range(300)])
+        index = make_ohlcv([200.0 + i for i in range(300)])
+        for days in (63, 126):
+            fig = charts.relative_chart(stock, index, "KOSPI", "종목", days=days)
+            assert all(len(t.y) == days for t in fig.data)
+            # 어느 기간이든 시작점은 100으로 다시 맞춘다
+            assert all(t.y[0] == pytest.approx(100.0) for t in fig.data)

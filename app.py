@@ -259,9 +259,15 @@ with left:
                     config={"displayModeBar": False})
 
 with right:
-    st.markdown(f"**{snap.name} vs {a.index_name}** — 1년 전을 100으로 맞춘 비교")
+    # 기간마다 보이는 것이 다르다: 3개월=단기 모멘텀, 6개월=주도주 확인(기본), 1년=장기 추세.
+    # 시작점을 100으로 맞추는 방식은 시작일이 급등락일이면 왜곡되므로 기간 전환으로 상쇄한다.
+    period_label = st.radio("비교 기간", ["3개월", "6개월", "1년"], index=1, horizontal=True,
+                            label_visibility="collapsed")
+    period_days = {"3개월": 63, "6개월": 126, "1년": 252}[period_label]
+    st.markdown(f"**{snap.name} vs {a.index_name}** — {period_label} 전을 100으로 맞춘 비교")
     st.plotly_chart(
-        charts.relative_chart(a.stock_df, a.index_df, a.index_name, snap.name),
+        charts.relative_chart(a.stock_df, a.index_df, a.index_name, snap.name,
+                              days=period_days),
         config={"displayModeBar": False},
     )
 

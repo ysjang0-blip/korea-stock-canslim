@@ -87,7 +87,9 @@ def price_chart(df: pd.DataFrame, high_52w: float | None, low_52w: float | None,
     return _base(fig, height=300)
 
 
-MA_COLORS = (C["s2"], C["s3"], C["s4"])  # 이동평균선 색 — 팔레트 슬롯 2·3·4 순서 고정
+# 이동평균선 색 — 기간 오름차순으로 주황 / 진한 파랑 / 검정.
+# 종가 선이 밝은 파랑(s1)이라, 두 번째 선은 같은 계열의 더 진한 파랑으로 구별한다.
+MA_COLORS = (C["s2"], "#1c5cab", C["ink"])
 
 
 def technical_chart(

@@ -87,9 +87,10 @@ def price_chart(df: pd.DataFrame, high_52w: float | None, low_52w: float | None,
     return _base(fig, height=300)
 
 
-# 이동평균선 색 — 기간 오름차순으로 주황 / 진한 파랑 / 검정.
-# 종가 선이 밝은 파랑(s1)이라, 두 번째 선은 같은 계열의 더 진한 파랑으로 구별한다.
-MA_COLORS = (C["s2"], "#1c5cab", C["ink"])
+# 이동평균선 색 — 기간 오름차순으로 주황 / 진초록 / 보라.
+# 종가가 파랑이므로 이동평균선에는 파랑·검정 계열을 쓰지 않는다 (겹치면 구별 불가).
+# 세 색은 색상과 밝기가 모두 벌어져 겹치는 구간에서도 갈라져 보인다.
+MA_COLORS = (C["s2"], "#008300", "#4a3aa7")
 
 
 def technical_chart(

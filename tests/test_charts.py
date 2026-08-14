@@ -183,11 +183,12 @@ class Test로그축:
         assert ys[0] == pytest.approx(math.log10(90.0))
         assert ys[1] == pytest.approx(math.log10(150.0))
 
-    def test_이동평균_색은_주황_진파랑_검정_순서다(self):
-        """기간 오름차순: 20=주황, 50=진한 파랑(종가의 밝은 파랑과 구별), 200=검정."""
+    def test_이동평균_색은_주황_진초록_보라_순서다(self):
+        """기간 오름차순: 20=주황, 50=진초록, 200=보라.
+        종가(파랑)·볼린저밴드(회색)와 겹치지 않는 색으로만 고른다."""
         df = make_ohlcv([100.0 + i for i in range(60)])
         fig = charts.technical_chart(df, 150.0, 90.0, ma_windows=(20, 50, 200))
         colors = {t.name: t.line.color for t in fig.data if t.name and t.name.startswith("MA")}
         assert colors["MA 20"] == charts.C["s2"]
-        assert colors["MA 50"] == "#1c5cab"
-        assert colors["MA 200"] == charts.C["ink"]
+        assert colors["MA 50"] == "#008300"
+        assert colors["MA 200"] == "#4a3aa7"

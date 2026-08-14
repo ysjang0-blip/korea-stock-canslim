@@ -250,26 +250,42 @@ st.markdown(
 # ─────────────────────────────────────────────────────────── 차트
 
 st.markdown("### 차트")
-left, right = st.columns(2)
 
-with left:
-    st.markdown("**주가 흐름 (최근 1년 반)**")
-    st.plotly_chart(charts.price_chart(a.stock_df, snap.high_52w, snap.low_52w,
-                                       currency=snap.currency),
-                    config={"displayModeBar": False})
 
-with right:
-    # 기간마다 보이는 것이 다르다: 3개월=단기 모멘텀, 6개월=주도주 확인(기본), 1년=장기 추세.
-    # 시작점을 100으로 맞추는 방식은 시작일이 급등락일이면 왜곡되므로 기간 전환으로 상쇄한다.
-    period_label = st.radio("비교 기간", ["3개월", "6개월", "1년"], index=1, horizontal=True,
-                            label_visibility="collapsed")
-    period_days = {"3개월": 63, "6개월": 126, "1년": 252}[period_label]
-    st.markdown(f"**{snap.name} vs {a.index_name}** — {period_label} 전을 100으로 맞춘 비교")
-    st.plotly_chart(
-        charts.relative_chart(a.stock_df, a.index_df, a.index_name, snap.name,
-                              days=period_days),
-        config={"displayModeBar": False},
-    )
+def parse_ma_windows(text: str, default=(20, 50, 200)) -> tuple[int, ...]:
+    """'20, 50, 200' → (20, 50, 200). 2~250일, 최대 3개, 잘못 입력하면 기본값."""
+    windows: list[int] = []
+    for token in text.replace(" ", "").split(","):
+        if token.isdigit() and 2 <= int(token) <= 250 and int(token) not in windows:
+            windows.append(int(token))
+    return tuple(sorted(windows[:3])) or default
+
+
+head_l, head_r = st.columns([3, 1])
+head_l.markdown("**주가 흐름 (최근 1년 반)** — 이동평균 · 볼린저밴드 · RSI · %B")
+ma_text = head_r.text_input("이동평균 기간 (일, 쉼표 구분 · 최대 3개)", value="20,50,200")
+ma_windows = parse_ma_windows(ma_text)
+
+st.plotly_chart(
+    charts.technical_chart(a.stock_df, snap.high_52w, snap.low_52w,
+                           currency=snap.currency, ma_windows=ma_windows),
+    config={"displayModeBar": False},
+)
+st.caption("이동평균·RSI·%B는 보유 데이터(약 1년 반) 안에서 계산되어, 긴 기간의 이동평균은 "
+           "앞부분이 비어 있을 수 있습니다. RSI 70 이상은 과열·30 이하는 침체, "
+           "%B 1 초과는 밴드 상단 돌파·0 미만은 하단 이탈로 봅니다.")
+
+# 기간마다 보이는 것이 다르다: 3개월=단기 모멘텀, 6개월=주도주 확인(기본), 1년=장기 추세.
+# 시작점을 100으로 맞추는 방식은 시작일이 급등락일이면 왜곡되므로 기간 전환으로 상쇄한다.
+period_label = st.radio("비교 기간", ["3개월", "6개월", "1년"], index=1, horizontal=True,
+                        label_visibility="collapsed")
+period_days = {"3개월": 63, "6개월": 126, "1년": 252}[period_label]
+st.markdown(f"**{snap.name} vs {a.index_name}** — {period_label} 전을 100으로 맞춘 비교")
+st.plotly_chart(
+    charts.relative_chart(a.stock_df, a.index_df, a.index_name, snap.name,
+                          days=period_days),
+    config={"displayModeBar": False},
+)
 
 metric_name = st.radio("분기 실적 지표", ["EPS", "매출액"], horizontal=True,
                        label_visibility="collapsed")

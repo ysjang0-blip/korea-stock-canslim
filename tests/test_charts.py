@@ -95,3 +95,35 @@ class Test상대차트:
             assert all(len(t.y) == days for t in fig.data)
             # 어느 기간이든 시작점은 100으로 다시 맞춘다
             assert all(t.y[0] == pytest.approx(100.0) for t in fig.data)
+
+
+class Test기술적차트:
+    def _fig(self, ma_windows=(20, 50, 200)):
+        df = make_ohlcv([100.0 + (i % 7) + i * 0.1 for i in range(300)])
+        return charts.technical_chart(df, 120.0, 80.0, ma_windows=ma_windows)
+
+    def test_3단_구성이다(self):
+        """주가(y), RSI(y2), %B(y3) — 이중축이 아니라 분리된 패널."""
+        fig = self._fig()
+        axes = {t.yaxis for t in fig.data}
+        assert axes == {"y", "y2", "y3"}
+
+    def test_계열_이름이_전부_있다(self):
+        names = [t.name for t in self._fig().data]
+        for expected in ("종가", "MA 20", "MA 50", "MA 200", "RSI(14)", "RSI MA(14)", "%B"):
+            assert expected in names
+
+    def test_이동평균_기간을_바꾸면_계열도_바뀐다(self):
+        names = [t.name for t in self._fig(ma_windows=(5, 60)).data]
+        assert "MA 5" in names and "MA 60" in names
+        assert "MA 200" not in names
+
+    def test_RSI_축은_0에서_100으로_고정(self):
+        fig = self._fig()
+        assert list(fig.layout.yaxis2.range) == [0, 100]
+
+    def test_빈_데이터도_죽지_않는다(self):
+        import pandas as pd
+        empty = pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
+        fig = charts.technical_chart(empty, None, None)
+        assert fig is not None

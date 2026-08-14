@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
+from . import indicators
 from .models import Source
 
-# 검증된 레퍼런스 팔레트 (라이트 모드) — 앞 3개 슬롯만 사용한다
+# 검증된 레퍼런스 팔레트 (라이트 모드) — 슬롯 순서가 CVD 안전장치이므로 바꾸지 않는다
 C = {
     "surface": "#fcfcfb",
     "grid": "#e1e0d9",
@@ -19,9 +21,10 @@ C = {
     "ink": "#0b0b0b",
     "ink2": "#52514e",
     "muted": "#898781",
-    "s1": "#2a78d6",   # 파랑 — 실적확정 / 이 종목
-    "s2": "#eb6834",   # 주황 — 컨센서스 / 비교 지수
+    "s1": "#2a78d6",   # 파랑 — 실적확정 / 이 종목 / 각 패널의 주 계열
+    "s2": "#eb6834",   # 주황 — 컨센서스 / 비교 지수 / 각 패널의 보조 계열
     "s3": "#1baf7a",   # 청록 — 역산추정
+    "s4": "#eda100",   # 노랑 — 네 번째 슬롯 (세 번째 이동평균선)
     "good": "#0ca30c",
     "critical": "#d03b3b",
 }
@@ -80,6 +83,106 @@ def price_chart(df: pd.DataFrame, high_52w: float | None, low_52w: float | None,
             )
     fig.update_yaxes(tickformat=f",.{digits}f", ticksuffix=unit)
     return _base(fig, height=300)
+
+
+MA_COLORS = (C["s2"], C["s3"], C["s4"])  # 이동평균선 색 — 팔레트 슬롯 2·3·4 순서 고정
+
+
+def technical_chart(
+    df: pd.DataFrame,
+    high_52w: float | None,
+    low_52w: float | None,
+    currency: str = "KRW",
+    ma_windows: tuple[int, ...] = (20, 50, 200),
+) -> go.Figure:
+    """주가 + 이동평균 + 볼린저밴드 / RSI / %B 를 x축을 공유하는 3단으로 그린다.
+
+    RSI(0~100)와 %B(0~1)는 주가와 축 단위가 달라 한 그림에 겹칠 수 없다
+    (이중축 금지). 각 패널의 주 계열은 파랑, 보조 계열은 주황 — 패널이
+    분리된 좌표계이므로 패널 안에서 팔레트 슬롯 순서를 다시 시작한다.
+    """
+    usd = currency == "USD"
+    unit, digits = ("$", 2) if usd else ("원", 0)
+    close = df["close"] if "close" in df.columns else pd.Series(dtype=float)
+
+    fig = make_subplots(
+        rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.055,
+        row_heights=[0.56, 0.22, 0.22],
+        subplot_titles=("", "RSI(14)", f"볼린저 %B ({indicators.BB_WINDOW}일 · {indicators.BB_STD:.0f}σ)"),
+    )
+
+    # ── 1단: 볼린저밴드(배경 띠) → 종가 → 이동평균 ─────────────────────
+    _, bb_upper, bb_lower, pct_b = indicators.bollinger(close)
+    fig.add_trace(go.Scatter(
+        x=df["date"], y=bb_upper, mode="lines", name="볼린저밴드",
+        line=dict(color=C["axis"], width=0.8), showlegend=False, hoverinfo="skip",
+    ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=df["date"], y=bb_lower, mode="lines", name="볼린저밴드",
+        line=dict(color=C["axis"], width=0.8),
+        fill="tonexty", fillcolor="rgba(137,135,129,0.10)", hoverinfo="skip",
+    ), row=1, col=1)
+
+    fig.add_trace(go.Scatter(
+        x=df["date"], y=close, mode="lines", name="종가",
+        line=dict(color=C["s1"], width=2),
+        hovertemplate="%{x|%Y-%m-%d}<br>종가 %{y:,." + str(digits) + "f}" + unit + "<extra></extra>",
+    ), row=1, col=1)
+
+    for window, color in zip(ma_windows, MA_COLORS):
+        fig.add_trace(go.Scatter(
+            x=df["date"], y=indicators.sma(close, window), mode="lines", name=f"MA {window}",
+            line=dict(color=color, width=1.4),
+            hovertemplate="%{x|%Y-%m-%d}<br>MA " + str(window)
+                          + " %{y:,." + str(digits) + "f}" + unit + "<extra></extra>",
+        ), row=1, col=1)
+
+    for value, label, dash in ((high_52w, "52주 최고", "dash"), (low_52w, "52주 최저", "dot")):
+        if value:
+            fig.add_hline(
+                y=value, row=1, col=1,
+                line=dict(color=C["muted"], width=1, dash=dash),
+                annotation_text=f"{label} {value:,.{digits}f}{unit}",
+                annotation_position="top left",
+                annotation_font=dict(color=C["muted"], size=11),
+                annotation_bgcolor=C["surface"], annotation_borderpad=2,
+            )
+
+    # ── 2단: RSI + RSI 기반 이동평균 ──────────────────────────────────
+    rsi = indicators.rsi(close)
+    fig.add_trace(go.Scatter(
+        x=df["date"], y=rsi, mode="lines", name="RSI(14)",
+        line=dict(color=C["s1"], width=1.8),
+        hovertemplate="%{x|%Y-%m-%d}<br>RSI %{y:,.1f}<extra></extra>",
+    ), row=2, col=1)
+    fig.add_trace(go.Scatter(
+        x=df["date"], y=indicators.sma(rsi, indicators.RSI_PERIOD), mode="lines",
+        name="RSI MA(14)", line=dict(color=C["s2"], width=1.4),
+        hovertemplate="%{x|%Y-%m-%d}<br>RSI MA %{y:,.1f}<extra></extra>",
+    ), row=2, col=1)
+    for level in (70, 30):
+        fig.add_hline(y=level, row=2, col=1,
+                      line=dict(color=C["muted"], width=1, dash="dot"))
+    fig.update_yaxes(range=[0, 100], tickvals=[30, 50, 70], row=2, col=1)
+
+    # ── 3단: 볼린저 %B ────────────────────────────────────────────────
+    fig.add_trace(go.Scatter(
+        x=df["date"], y=pct_b, mode="lines", name="%B",
+        line=dict(color=C["s1"], width=1.8), showlegend=False,
+        hovertemplate="%{x|%Y-%m-%d}<br>%B %{y:,.2f}<extra></extra>",
+    ), row=3, col=1)
+    for level in (1.0, 0.0):
+        fig.add_hline(y=level, row=3, col=1,
+                      line=dict(color=C["muted"], width=1, dash="dot"))
+    fig.update_yaxes(tickvals=[0, 0.5, 1], row=3, col=1)
+
+    fig.update_yaxes(tickformat=f",.{digits}f", ticksuffix=unit, row=1, col=1)
+    fig = _base(fig, height=640, legend=True)
+    fig.update_layout(legend_traceorder="normal")  # 종가·MA 가 앞, RSI 가 뒤에 오도록
+    for note in fig.layout.annotations:
+        if note.text in ("RSI(14)",) or note.text.startswith("볼린저 %B"):
+            note.update(font=dict(size=12, color=C["ink2"]), x=0, xanchor="left")
+    return fig
 
 
 def earnings_chart(

@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -138,14 +140,17 @@ def technical_chart(
         ), row=1, col=1)
 
     for value, label, dash in ((high_52w, "52주 최고", "dash"), (low_52w, "52주 최저", "dot")):
-        if value:
-            fig.add_hline(
-                y=value, row=1, col=1,
-                line=dict(color=C["muted"], width=1, dash=dash),
-                annotation_text=f"{label} {value:,.{digits}f}{unit}",
-                annotation_position="top left",
-                annotation_font=dict(color=C["muted"], size=11),
-                annotation_bgcolor=C["surface"], annotation_borderpad=2,
+        if value and value > 0:
+            fig.add_hline(y=value, row=1, col=1,
+                          line=dict(color=C["muted"], width=1, dash=dash))
+            # 주가 축이 log 라서 주석 y 는 log10 좌표로 줘야 한다
+            # (add_hline 의 annotation 은 log 변환을 하지 않아 화면 밖으로 사라진다)
+            fig.add_annotation(
+                row=1, col=1, xref="x domain", x=0.0, xanchor="left",
+                y=math.log10(value), yanchor="bottom", showarrow=False,
+                text=f"{label} {value:,.{digits}f}{unit}",
+                font=dict(color=C["muted"], size=11),
+                bgcolor=C["surface"], borderpad=2,
             )
 
     # ── 2단: RSI + RSI 기반 이동평균 ──────────────────────────────────
@@ -176,7 +181,9 @@ def technical_chart(
                       line=dict(color=C["muted"], width=1, dash="dot"))
     fig.update_yaxes(tickvals=[0, 0.5, 1], row=3, col=1)
 
-    fig.update_yaxes(tickformat=f",.{digits}f", ticksuffix=unit, row=1, col=1)
+    # 주가 축은 log — 몇 배씩 오르는 종목도 '같은 비율 = 같은 기울기'로 읽힌다.
+    # RSI(0~100)·%B 패널은 값 범위가 좁고 0을 포함할 수 있어 선형 유지.
+    fig.update_yaxes(type="log", tickformat=f",.{digits}f", ticksuffix=unit, row=1, col=1)
     fig = _base(fig, height=640, legend=True)
     fig.update_layout(legend_traceorder="normal")  # 종가·MA 가 앞, RSI 가 뒤에 오도록
     for note in fig.layout.annotations:
@@ -201,20 +208,35 @@ def earnings_chart(
     else:
         unit, digits = ("원", 0) if label == "EPS" else ("억원", 0)
 
-    buckets: dict[Source, dict[str, list]] = {
-        s: {"x": [], "y": []} for s in (Source.ACTUAL, Source.CONSENSUS, Source.DERIVED)
-    }
+    # 전체 기간을 순서대로 모아 인접 분기끼리 QoQ 증가율을 계산한다.
+    # 역산(derived) 분기도 포함 — Q+2의 QoQ는 Q+1 컨센서스 대비다.
+    ordered: list[tuple[str, float, Source]] = []
     for period in quarterly.periods:
         value = quarterly.value(label, period.key)
         if value is None:
             continue
         source = Source.CONSENSUS if period.is_consensus else Source.ACTUAL
-        buckets[source]["x"].append(period.label)
-        buckets[source]["y"].append(value / scale)
-
+        ordered.append((period.label, value, source))
     if derived_key and derived_value is not None:
-        buckets[Source.DERIVED]["x"].append(f"{derived_key[:4]}.{derived_key[4:]}")
-        buckets[Source.DERIVED]["y"].append(derived_value / scale)
+        ordered.append((f"{derived_key[:4]}.{derived_key[4:]}", derived_value, Source.DERIVED))
+
+    qoq: dict[str, str] = {}
+    for (_, prev_value, _), (this_label, this_value, _) in zip(ordered, ordered[1:]):
+        if prev_value > 0:  # 직전 분기가 적자/0이면 증가율이 성립하지 않는다
+            qoq[this_label] = f"{(this_value / prev_value - 1) * 100:+,.1f}%"
+
+    buckets: dict[Source, dict[str, list]] = {
+        s: {"x": [], "y": [], "text": [], "qoq": []}
+        for s in (Source.ACTUAL, Source.CONSENSUS, Source.DERIVED)
+    }
+    for period_label, value, source in ordered:
+        bucket = buckets[source]
+        bucket["x"].append(period_label)
+        bucket["y"].append(value / scale)
+        value_text = f"{value / scale:,.{digits}f}"
+        rate = qoq.get(period_label)
+        bucket["text"].append(f"{value_text}<br>{rate}" if rate else value_text)
+        bucket["qoq"].append(rate or "—")
 
     fig = go.Figure()
     for source, data in buckets.items():
@@ -225,16 +247,18 @@ def earnings_chart(
             marker=dict(color=SOURCE_COLOR[source],
                         line=dict(color=C["surface"], width=2)),  # 막대 사이 2px 간격
             offsetgroup="q",
-            text=[f"{v:,.{digits}f}" for v in data["y"]],
+            text=data["text"],
+            customdata=data["qoq"],
             textposition="outside",
+            cliponaxis=False,  # 두 줄 라벨이 위 여백에서 잘리지 않게
             textfont=dict(color=C["ink2"], size=11),
             hovertemplate="%{x}<br>" + label + " %{y:,." + str(digits) + "f}" + unit
-                          + "<extra>%{data.name}</extra>",
+                          + "<br>QoQ %{customdata}<extra>%{data.name}</extra>",
         ))
 
     fig.update_layout(barmode="group", bargap=0.35)
     fig.update_yaxes(tickformat=f",.{digits}f", ticksuffix=unit)
-    fig = _base(fig, height=320, legend=True)
+    fig = _base(fig, height=340, legend=True)  # 두 줄 라벨(값+QoQ) 여유분
     # '2025.03' 을 숫자 2025.03 으로 읽어 막대가 흩어지는 것을 막는다
     fig.update_xaxes(type="category")
     return fig

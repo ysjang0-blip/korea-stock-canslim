@@ -127,3 +127,58 @@ class Test기술적차트:
         empty = pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
         fig = charts.technical_chart(empty, None, None)
         assert fig is not None
+
+
+class Test실적QoQ:
+    def test_막대_라벨에_QoQ가_병기된다(self, quarter_table):
+        """202603 EPS 6,993 vs 202512 2,864 → +144.2% (손계산)."""
+        fig = charts.earnings_chart(quarter_table, None, None, "EPS")
+        actual = next(t for t in fig.data if t.name == "실적확정")
+        by_x = dict(zip(actual.x, actual.text))
+        assert by_x["2026.03"] == "6,993<br>+144.2%"
+
+    def test_첫_분기에는_QoQ_줄이_없다(self, quarter_table):
+        fig = charts.earnings_chart(quarter_table, None, None, "EPS")
+        actual = next(t for t in fig.data if t.name == "실적확정")
+        by_x = dict(zip(actual.x, actual.text))
+        assert by_x["2025.03"] == "1,186"  # 직전 분기가 없어 값만
+
+    def test_역산_분기의_QoQ는_컨센서스_대비다(self, quarter_table):
+        """Q+2 11,145 vs Q+1 컨센서스 10,625 → +4.9%."""
+        fig = charts.earnings_chart(quarter_table, "202609", 11145.0, "EPS")
+        derived = next(t for t in fig.data if t.name == "역산추정")
+        assert derived.text[0] == "11,145<br>+4.9%"
+
+    def test_직전_분기가_적자면_QoQ를_붙이지_않는다(self):
+        eps = dict(SAMSUNG_Q_EPS, **{"202512": "-500"})
+        table = parse_finance(make_finance(SAMSUNG_Q_PERIODS, {"EPS": eps}))
+        fig = charts.earnings_chart(table, None, None, "EPS")
+        actual = next(t for t in fig.data if t.name == "실적확정")
+        by_x = dict(zip(actual.x, actual.text))
+        assert by_x["2026.03"] == "6,993"  # 증가율이 성립하지 않으니 값만
+
+    def test_hover에_QoQ가_들어간다(self, quarter_table):
+        fig = charts.earnings_chart(quarter_table, None, None, "EPS")
+        actual = next(t for t in fig.data if t.name == "실적확정")
+        assert "QoQ %{customdata}" in actual.hovertemplate
+        assert actual.customdata[0] == "—"  # 첫 분기
+
+
+class Test로그축:
+    def test_주가_패널만_log이고_RSI는_선형_고정(self):
+        df = make_ohlcv([100.0 + i for i in range(60)])
+        fig = charts.technical_chart(df, 150.0, 90.0)
+        assert fig.layout.yaxis.type == "log"          # 1단 주가
+        assert fig.layout.yaxis2.type != "log"          # 2단 RSI
+        assert list(fig.layout.yaxis2.range) == [0, 100]
+
+    def test_52주_라벨이_log_좌표로_붙는다(self):
+        """log축에서 주석 y는 log10(값) — 선형 값 그대로 주면 화면 밖으로 사라진다."""
+        import math
+        df = make_ohlcv([100.0 + i for i in range(60)])
+        fig = charts.technical_chart(df, 150.0, 90.0)
+        notes = [a for a in fig.layout.annotations if a.text and "52주" in a.text]
+        assert len(notes) == 2
+        ys = sorted(a.y for a in notes)
+        assert ys[0] == pytest.approx(math.log10(90.0))
+        assert ys[1] == pytest.approx(math.log10(150.0))

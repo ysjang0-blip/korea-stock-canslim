@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from src import analyze, charts, tickers
+from src import analyze, charts, report, tickers
 from src.charts import C
 from src.models import Source, Verdict
 
@@ -135,6 +135,14 @@ if latest_actual:
 if snap.consensus_date:
     _fresh_bits.append(f"컨센서스: {snap.consensus_date}")
 st.caption("🗓 기준일 — " + " · ".join(_fresh_bits))
+
+# 화면과 같은 숫자를 글·표로 담은 Word 리포트 (차트 제외)
+st.download_button(
+    "📄 분석 리포트 다운로드 (Word)",
+    data=report.build_report(a),
+    file_name=f"{snap.name}_분석리포트_{snap.price_date or '최신'}.docx",
+    mime=report.MIME,
+)
 
 if snap.upside_pct is not None and abs(snap.upside_pct) > 50:
     st.caption(f"⚠ 목표주가와 현재가의 괴리가 {snap.upside_pct:+.1f}%로 큽니다. "

@@ -128,6 +128,32 @@ class Test기술적차트:
         fig = charts.technical_chart(empty, None, None)
         assert fig is not None
 
+    def test_최근_126거래일만_보여준다(self):
+        """1년 반치 데이터를 받아도 화면에는 6개월(126거래일)만 그린다."""
+        fig = self._fig()  # 300행 입력
+        assert all(len(t.y) == 126 for t in fig.data)
+
+    def test_이동평균은_전체_이력으로_계산한_뒤_자른다(self):
+        """표시 구간만으로 계산하면 MA 50 앞 49일이 비는데, 그러면 안 된다."""
+        import math
+        fig = self._fig()
+        ma50 = next(t for t in fig.data if t.name == "MA 50")
+        assert not math.isnan(ma50.y[0])
+
+
+class TestHover비활성:
+    """모바일 스크롤 중 툴팁이 떠서 방해되므로 모든 차트에서 hover 를 끈다."""
+
+    def test_모든_차트가_hover를_끈다(self, quarter_table):
+        df = make_ohlcv([100.0 + i for i in range(60)])
+        figs = [
+            charts.technical_chart(df, 150.0, 90.0),
+            charts.relative_chart(df, df, "KOSPI", "종목", days=30),
+            charts.earnings_chart(quarter_table, None, None, "EPS"),
+            charts.price_chart(df, 150.0, 90.0),
+        ]
+        assert all(fig.layout.hovermode is False for fig in figs)
+
 
 class Test실적QoQ:
     def test_막대_라벨에_QoQ가_병기된다(self, quarter_table):
@@ -157,11 +183,12 @@ class Test실적QoQ:
         by_x = dict(zip(actual.x, actual.text))
         assert by_x["2026.03"] == "6,993"  # 증가율이 성립하지 않으니 값만
 
-    def test_hover에_QoQ가_들어간다(self, quarter_table):
+    def test_QoQ는_막대_라벨로만_보여준다(self, quarter_table):
+        """hover 를 껐으므로 hovertemplate/customdata 는 남기지 않는다."""
         fig = charts.earnings_chart(quarter_table, None, None, "EPS")
         actual = next(t for t in fig.data if t.name == "실적확정")
-        assert "QoQ %{customdata}" in actual.hovertemplate
-        assert actual.customdata[0] == "—"  # 첫 분기
+        assert actual.hovertemplate is None
+        assert actual.customdata is None
 
 
 class Test로그축:
@@ -182,6 +209,23 @@ class Test로그축:
         ys = sorted(a.y for a in notes)
         assert ys[0] == pytest.approx(math.log10(90.0))
         assert ys[1] == pytest.approx(math.log10(150.0))
+
+    def test_표시_범위에서_먼_52주선은_긋지_않는다(self):
+        """급등주의 52주 최저처럼 화면 밖 먼 값까지 축을 늘리면 6개월 확대가 무의미해진다."""
+        df = make_ohlcv([100.0 + i for i in range(60)])
+        fig = charts.technical_chart(df, 150.0, 20.0)  # 최저 20은 표시 범위(≈100~160)에서 멀다
+        notes = [a for a in fig.layout.annotations if a.text and "52주" in a.text]
+        assert len(notes) == 1
+        assert "최고" in notes[0].text
+
+    def test_주가_축_범위가_52주선까지_덮는다(self):
+        """자동 범위는 hline(shape)을 반영하지 않으므로 직접 준 범위가 선을 덮어야 한다."""
+        import math
+        df = make_ohlcv([100.0 + i for i in range(60)])
+        fig = charts.technical_chart(df, 150.0, 90.0)
+        lo, hi = fig.layout.yaxis.range
+        assert lo < math.log10(90.0)
+        assert hi > math.log10(150.0)
 
     def test_이동평균_색은_주황_진초록_보라_순서다(self):
         """기간 오름차순: 20=주황, 50=진초록, 200=보라.

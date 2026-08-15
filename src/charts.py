@@ -47,7 +47,8 @@ def _base(fig: go.Figure, height: int = 320, legend: bool = False) -> go.Figure:
         paper_bgcolor=C["surface"],
         plot_bgcolor=C["surface"],
         font=dict(family=FONT, size=12, color=C["ink2"]),
-        hovermode="x unified",
+        # 모바일에서 스크롤 중 툴팁이 계속 떠서 방해되므로 hover 를 끈다 — 차트는 그림으로만
+        hovermode=False,
         showlegend=legend,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0,
                     bgcolor="rgba(0,0,0,0)", font=dict(color=C["ink2"])),
@@ -69,7 +70,6 @@ def price_chart(df: pd.DataFrame, high_52w: float | None, low_52w: float | None,
     fig.add_trace(go.Scatter(
         x=df["date"], y=df["close"], mode="lines", name="종가",
         line=dict(color=C["s1"], width=2),
-        hovertemplate="%{x|%Y-%m-%d}<br>종가 %{y:,." + str(digits) + "f}" + unit + "<extra></extra>",
     ))
 
     # 라벨은 선 위쪽·그림 안쪽에 붙인다.
@@ -99,16 +99,25 @@ def technical_chart(
     low_52w: float | None,
     currency: str = "KRW",
     ma_windows: tuple[int, ...] = (20, 50, 200),
+    display_days: int = 126,
 ) -> go.Figure:
     """주가 + 이동평균 + 볼린저밴드 / RSI / %B 를 x축을 공유하는 3단으로 그린다.
 
     RSI(0~100)와 %B(0~1)는 주가와 축 단위가 달라 한 그림에 겹칠 수 없다
     (이중축 금지). 각 패널의 주 계열은 파랑, 보조 계열은 주황 — 패널이
     분리된 좌표계이므로 패널 안에서 팔레트 슬롯 순서를 다시 시작한다.
+
+    지표는 전체 이력으로 계산한 뒤 최근 display_days 거래일만 잘라 보여준다
+    — 표시 구간만으로 계산하면 긴 이동평균의 앞부분이 통째로 빈다.
     """
     usd = currency == "USD"
     unit, digits = ("$", 2) if usd else ("원", 0)
     close = df["close"] if "close" in df.columns else pd.Series(dtype=float)
+
+    def view(series: pd.Series) -> pd.Series:
+        return series.iloc[-display_days:]
+
+    dates = view(df["date"]) if "date" in df.columns else pd.Series(dtype=object)
 
     fig = make_subplots(
         rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.055,
@@ -118,55 +127,67 @@ def technical_chart(
 
     # ── 1단: 볼린저밴드(배경 띠) → 종가 → 이동평균 ─────────────────────
     _, bb_upper, bb_lower, pct_b = indicators.bollinger(close)
+    shown: list[pd.Series] = [view(close), view(bb_upper), view(bb_lower)]
     fig.add_trace(go.Scatter(
-        x=df["date"], y=bb_upper, mode="lines", name="볼린저밴드",
-        line=dict(color=C["axis"], width=0.8), showlegend=False, hoverinfo="skip",
+        x=dates, y=view(bb_upper), mode="lines", name="볼린저밴드",
+        line=dict(color=C["axis"], width=0.8), showlegend=False,
     ), row=1, col=1)
     fig.add_trace(go.Scatter(
-        x=df["date"], y=bb_lower, mode="lines", name="볼린저밴드",
+        x=dates, y=view(bb_lower), mode="lines", name="볼린저밴드",
         line=dict(color=C["axis"], width=0.8),
-        fill="tonexty", fillcolor="rgba(137,135,129,0.10)", hoverinfo="skip",
+        fill="tonexty", fillcolor="rgba(137,135,129,0.10)",
     ), row=1, col=1)
 
     fig.add_trace(go.Scatter(
-        x=df["date"], y=close, mode="lines", name="종가",
+        x=dates, y=view(close), mode="lines", name="종가",
         line=dict(color=C["s1"], width=2),
-        hovertemplate="%{x|%Y-%m-%d}<br>종가 %{y:,." + str(digits) + "f}" + unit + "<extra></extra>",
     ), row=1, col=1)
 
     for window, color in zip(ma_windows, MA_COLORS):
+        ma = indicators.sma(close, window)
+        shown.append(view(ma))
         fig.add_trace(go.Scatter(
-            x=df["date"], y=indicators.sma(close, window), mode="lines", name=f"MA {window}",
+            x=dates, y=view(ma), mode="lines", name=f"MA {window}",
             line=dict(color=color, width=1.4),
-            hovertemplate="%{x|%Y-%m-%d}<br>MA " + str(window)
-                          + " %{y:,." + str(digits) + "f}" + unit + "<extra></extra>",
         ), row=1, col=1)
 
+    # 표시 구간의 값 범위(log10). 52주선이 이 범위에서 크게 벗어나면 —
+    # 예: 급등주의 52주 최저 — 억지로 축을 늘려 6개월 확대를 망치므로 선을 생략한다.
+    values = pd.concat(shown).dropna() if shown else pd.Series(dtype=float)
+    values = values[values > 0]
+    lo = hi = None
+    if not values.empty:
+        lo, hi = math.log10(values.min()), math.log10(values.max())
+    span = max((hi - lo), 0.01) if lo is not None else 0.01
+
     for value, label, dash in ((high_52w, "52주 최고", "dash"), (low_52w, "52주 최저", "dot")):
-        if value and value > 0:
-            fig.add_hline(y=value, row=1, col=1,
-                          line=dict(color=C["muted"], width=1, dash=dash))
-            # 주가 축이 log 라서 주석 y 는 log10 좌표로 줘야 한다
-            # (add_hline 의 annotation 은 log 변환을 하지 않아 화면 밖으로 사라진다)
-            fig.add_annotation(
-                row=1, col=1, xref="x domain", x=0.0, xanchor="left",
-                y=math.log10(value), yanchor="bottom", showarrow=False,
-                text=f"{label} {value:,.{digits}f}{unit}",
-                font=dict(color=C["muted"], size=11),
-                bgcolor=C["surface"], borderpad=2,
-            )
+        if not (value and value > 0):
+            continue
+        y = math.log10(value)
+        if lo is not None and not (lo - 0.4 * span <= y <= hi + 0.4 * span):
+            continue
+        fig.add_hline(y=value, row=1, col=1,
+                      line=dict(color=C["muted"], width=1, dash=dash))
+        # 주가 축이 log 라서 주석 y 는 log10 좌표로 줘야 한다
+        # (add_hline 의 annotation 은 log 변환을 하지 않아 화면 밖으로 사라진다)
+        fig.add_annotation(
+            row=1, col=1, xref="x domain", x=0.0, xanchor="left",
+            y=y, yanchor="bottom", showarrow=False,
+            text=f"{label} {value:,.{digits}f}{unit}",
+            font=dict(color=C["muted"], size=11),
+            bgcolor=C["surface"], borderpad=2,
+        )
+        lo, hi = min(lo, y), max(hi, y)
 
     # ── 2단: RSI + RSI 기반 이동평균 ──────────────────────────────────
     rsi = indicators.rsi(close)
     fig.add_trace(go.Scatter(
-        x=df["date"], y=rsi, mode="lines", name="RSI(14)",
+        x=dates, y=view(rsi), mode="lines", name="RSI(14)",
         line=dict(color=C["s1"], width=1.8),
-        hovertemplate="%{x|%Y-%m-%d}<br>RSI %{y:,.1f}<extra></extra>",
     ), row=2, col=1)
     fig.add_trace(go.Scatter(
-        x=df["date"], y=indicators.sma(rsi, indicators.RSI_PERIOD), mode="lines",
+        x=dates, y=view(indicators.sma(rsi, indicators.RSI_PERIOD)), mode="lines",
         name="RSI MA(14)", line=dict(color=C["s2"], width=1.4),
-        hovertemplate="%{x|%Y-%m-%d}<br>RSI MA %{y:,.1f}<extra></extra>",
     ), row=2, col=1)
     for level in (70, 30):
         fig.add_hline(y=level, row=2, col=1,
@@ -175,9 +196,8 @@ def technical_chart(
 
     # ── 3단: 볼린저 %B ────────────────────────────────────────────────
     fig.add_trace(go.Scatter(
-        x=df["date"], y=pct_b, mode="lines", name="%B",
+        x=dates, y=view(pct_b), mode="lines", name="%B",
         line=dict(color=C["s1"], width=1.8), showlegend=False,
-        hovertemplate="%{x|%Y-%m-%d}<br>%B %{y:,.2f}<extra></extra>",
     ), row=3, col=1)
     for level in (1.0, 0.0):
         fig.add_hline(y=level, row=3, col=1,
@@ -187,6 +207,11 @@ def technical_chart(
     # 주가 축은 log — 몇 배씩 오르는 종목도 '같은 비율 = 같은 기울기'로 읽힌다.
     # RSI(0~100)·%B 패널은 값 범위가 좁고 0을 포함할 수 있어 선형 유지.
     fig.update_yaxes(type="log", tickformat=f",.{digits}f", ticksuffix=unit, row=1, col=1)
+    if lo is not None:
+        # 범위를 직접 준다 — 자동 범위는 52주선(shape)을 반영하지 않아 선이 잘릴 수 있다.
+        # 위쪽 여유를 더 두는 것은 52주 최고 라벨이 선 위에 얹히기 때문.
+        pad = max(hi - lo, 0.01)
+        fig.update_yaxes(range=[lo - 0.05 * pad, hi + 0.12 * pad], row=1, col=1)
     fig = _base(fig, height=640, legend=True)
     fig.update_layout(legend_traceorder="normal")  # 종가·MA 가 앞, RSI 가 뒤에 오도록
     for note in fig.layout.annotations:
@@ -229,7 +254,7 @@ def earnings_chart(
             qoq[this_label] = f"{(this_value / prev_value - 1) * 100:+,.1f}%"
 
     buckets: dict[Source, dict[str, list]] = {
-        s: {"x": [], "y": [], "text": [], "qoq": []}
+        s: {"x": [], "y": [], "text": []}
         for s in (Source.ACTUAL, Source.CONSENSUS, Source.DERIVED)
     }
     for period_label, value, source in ordered:
@@ -239,7 +264,6 @@ def earnings_chart(
         value_text = f"{value / scale:,.{digits}f}"
         rate = qoq.get(period_label)
         bucket["text"].append(f"{value_text}<br>{rate}" if rate else value_text)
-        bucket["qoq"].append(rate or "—")
 
     fig = go.Figure()
     for source, data in buckets.items():
@@ -251,12 +275,9 @@ def earnings_chart(
                         line=dict(color=C["surface"], width=2)),  # 막대 사이 2px 간격
             offsetgroup="q",
             text=data["text"],
-            customdata=data["qoq"],
             textposition="outside",
             cliponaxis=False,  # 두 줄 라벨이 위 여백에서 잘리지 않게
             textfont=dict(color=C["ink2"], size=11),
-            hovertemplate="%{x}<br>" + label + " %{y:,." + str(digits) + "f}" + unit
-                          + "<br>QoQ %{customdata}<extra>%{data.name}</extra>",
         ))
 
     fig.update_layout(barmode="group", bargap=0.35)
@@ -280,7 +301,6 @@ def relative_chart(stock: pd.DataFrame, index: pd.DataFrame, index_name: str,
         fig.add_trace(go.Scatter(
             x=series["date"], y=rebased, mode="lines", name=name,
             line=dict(color=color, width=2),
-            hovertemplate="%{x|%Y-%m-%d}<br>" + name + " %{y:,.1f}<extra></extra>",
         ))
 
     fig.add_hline(y=100, line=dict(color=C["axis"], width=1))

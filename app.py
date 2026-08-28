@@ -5,6 +5,9 @@
 
 from __future__ import annotations
 
+import hashlib
+from pathlib import Path
+
 import streamlit as st
 
 from src import analyze, charts, report, tickers
@@ -57,8 +60,20 @@ def tag(text: str, color: str) -> str:
     return f'<span class="tag" style="color:{color};border-color:{color}">{text}</span>'
 
 
+def _code_version() -> str:
+    """src/*.py 내용의 지문. 캐시 키에 넣어, 코드가 바뀌면 옛 분석 결과(다른 모양의 객체)를
+    다시 쓰지 않게 한다 — 배포 직후 옛 캐시를 새 코드로 읽다가 AttributeError 가 나는 것을 막는다."""
+    digest = hashlib.md5()
+    for path in sorted(Path(__file__).parent.glob("src/*.py")):
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+CODE_VERSION = _code_version()
+
+
 @st.cache_data(ttl=600, show_spinner=False)
-def load(code: str, name: str, market: str, region: str):
+def load(code: str, name: str, market: str, region: str, version: str):
     return analyze.run_for(tickers.StockRef(code=code, name=name, market=market, region=region))
 
 
@@ -96,7 +111,7 @@ if len(candidates) > 1:
 
 try:
     with st.spinner(f"{ref.name} 분석 중…"):
-        a = load(ref.code, ref.name, ref.market, ref.region)
+        a = load(ref.code, ref.name, ref.market, ref.region, CODE_VERSION)
 except Exception as exc:  # 비공식 API라 언제든 바뀔 수 있다
     st.error(f"분석에 실패했습니다: {exc}")
     st.caption("데이터 출처가 형식을 바꿨거나 일시적인 네트워크 오류일 수 있습니다. "

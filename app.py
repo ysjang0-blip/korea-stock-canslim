@@ -155,8 +155,16 @@ if snap.summary:
 # ─────────────────────────────────────────────────────────── CANSLIM
 
 st.markdown("### CANSLIM 판정")
-st.markdown(f"**{a.canslim.summary}** · 판단이 불가능한 항목은 분모에서 제외했습니다 "
-            f"(모르는 것을 틀렸다고 보지 않습니다).")
+_summary_color = "#1baf7a" if a.canslim.qualified else "#c0392b"
+st.markdown(
+    f'<span style="color:{_summary_color};font-weight:700;font-size:1.15rem">'
+    f'{"🟢" if a.canslim.qualified else "🔴"} {a.canslim.summary}</span> '
+    f'&nbsp;·&nbsp; {a.canslim.tally}',
+    unsafe_allow_html=True,
+)
+st.caption("7개 항목을 **모두** 합격해야 충족입니다. 각 항목은 세부 조건을 전부 만족해야 합격이며, "
+           "⚪ 판단불가는 자료가 없어 못 본 것이라 불합격과 구별하지만 충족으로 쳐 주지도 않습니다. "
+           "기준은 저장소의 `docs/canslim_criteria.md` 에 있습니다.")
 
 badges = st.columns(7)
 for col, itm in zip(badges, a.canslim.items):
@@ -174,12 +182,12 @@ rows = "".join(
     f"<td class='dim'>{i.criterion}</td>"
     f"<td class='num'>{i.actual}</td>"
     f"<td style='color:{VERDICT_COLOR[i.verdict]};white-space:nowrap'>{i.verdict.badge} {i.verdict.value}</td>"
-    f"<td class='dim'>{i.evidence}</td></tr>"
+    f"<td class='dim'>{i.detail.replace(chr(10), '<br>')}</td></tr>"
     for i in a.canslim.items
 )
 st.markdown(
     f'<div class="panel"><table class="grid">'
-    f'<tr><th>항목</th><th>기준</th><th>실제값</th><th>판정</th><th>근거</th></tr>'
+    f'<tr><th>항목</th><th>기준</th><th>실제값</th><th>판정</th><th>세부 조건 · 근거</th></tr>'
     f'{rows}</table></div>',
     unsafe_allow_html=True,
 )
@@ -326,7 +334,8 @@ with st.expander("이 분석의 한계 — 반드시 읽어 주세요"):
 """
     else:
         market_specific = f"""
-- **`I`는 기관 보유 '비중'이 아니라 외국인 소진율 추세입니다.**
+- **`I`는 기관 보유 '비중'이 아니라 외국인 소진율 추세(+0.5%p 이상)와 네이버가 주는 최근 며칠의
+  기관 누적 순매수입니다.** 순매수 자료는 5거래일 안팎이라 짧은 기간의 흐름만 반영합니다.
 - **Q+2는 역산 추정치입니다.** 네이버가 미래 분기 컨센서스를 하나만 주기 때문에,
   연간 컨센서스에서 이미 알려진 분기를 빼고 전년도 계절성 비중으로 나눠 뽑았습니다.
 - **최신 확정 분기가 한 분기 늦을 수 있습니다.** 잠정실적 발표 후에도 네이버 확정 재무 반영까지는
@@ -337,15 +346,19 @@ with st.expander("이 분석의 한계 — 반드시 읽어 주세요"):
     st.markdown(
         f"""
 - **오닐 원본 RS Rating(1~99점)이 아닙니다.** `L` 항목은 전 종목 백분위 순위가 아니라
-  **{a.index_name} 대비 초과수익 여부**입니다. 원본 등급은 IBD 유료 서비스라 가져올 수 없습니다.
+  **{a.index_name} 대비 +20%p 이상 초과수익**과 종목 자체의 추세(현재가 > 50일선 > 200일선)로
+  판정합니다. 원본 등급은 IBD 유료 서비스라 가져올 수 없습니다.
+- **`M`의 분산일은 지수 거래량으로 셉니다.** 지수가 0.2% 이상 빠졌는데 거래량이 전일보다 많은 날을
+  최근 25거래일에서 세어 5일 이상이면 조정 진입으로 봅니다. 지수 거래량이 없으면 판단불가입니다.
 - **`N`(New)은 신고가 하나가 아닙니다.** 오닐의 N은 신제품·신규 서비스·새 경영진·새로운 산업
   환경, 그리고 그 결과인 신고가를 모두 뜻합니다. 이 도구는 **① 신고가 근접**과
   **② 새로운 재료**를 함께 보고, 둘 다 충족해야 합격으로 봅니다.
   재료는 최근 {a.newness.window_days}일 치 제목을 키워드로 자동 분류한 것입니다.
   기계적 분류라 사람의 판단을 대신할 수 없으니, 표의 근거란에 뜬 제목을 직접 읽어 보세요.
   (같은 사건을 여러 매체가 쓴 기사는 하나로 합칩니다.)
-- **`S`는 유통주식수(float)를 반영하지 못합니다.** 무료로 안정적으로 구할 수 없어 거래량 급증으로
-  대체했고, 장중에는 부분 거래량 왜곡을 피하려고 **직전 완결 거래일**의 거래량을 씁니다.
+- **`S`는 유통주식수(float)를 반영하지 못합니다.** 무료로 안정적으로 구할 수 없어 **상승일 거래량 ÷
+  하락일 거래량(매집 비율)**과 최근 10일 평균 거래량 증가로 대체했고, 장중에는 부분 거래량 왜곡을
+  피하려고 **직전 완결 거래일**까지만 씁니다.
 {market_specific}
 - 애널리스트 커버리지가 없는 소형주는 컨센서스가 아예 없는 것이 정상입니다.
 """

@@ -11,7 +11,7 @@ from io import BytesIO
 
 from docx import Document
 from docx.oxml.ns import qn
-from docx.shared import Pt
+from docx.shared import Cm, Pt
 
 from .models import Source, Verdict
 
@@ -43,7 +43,9 @@ def _new_document() -> Document:
     return doc
 
 
-def _add_table(doc: Document, headers: list[str], rows: list[list[str]]):
+def _add_table(doc: Document, headers: list[str], rows: list[list[str]],
+               widths_cm: list[float] | None = None, font_pt: int | None = None):
+    """표 하나. widths_cm 를 주면 열 너비를 고정한다 (긴 근거 칸이 있는 표용)."""
     table = doc.add_table(rows=1, cols=len(headers))
     table.style = "Table Grid"
     for cell, text in zip(table.rows[0].cells, headers):
@@ -54,6 +56,17 @@ def _add_table(doc: Document, headers: list[str], rows: list[list[str]]):
     for row in rows:
         for cell, text in zip(table.add_row().cells, row):
             cell.text = text
+    if widths_cm:
+        table.autofit = False
+        for row in table.rows:
+            for cell, width in zip(row.cells, widths_cm):
+                cell.width = Cm(width)
+    if font_pt:
+        for row in table.rows:
+            for cell in row.cells:
+                for p in cell.paragraphs:
+                    for run in p.runs:
+                        run.font.size = Pt(font_pt)
     return table
 
 
@@ -98,12 +111,17 @@ def build_report(a) -> bytes:
 
     # ── CANSLIM ──────────────────────────────────────────────────────
     doc.add_heading("CANSLIM 판정", level=1)
-    doc.add_paragraph(f"{a.canslim.summary} — 판단이 불가능한 항목은 분모에서 제외했습니다.")
+    doc.add_paragraph(
+        f"{a.canslim.summary} ({a.canslim.tally}) — 7개 항목을 모두 합격해야 충족입니다. "
+        "판단불가는 자료가 없어 못 본 것이라 불합격과 구별하지만 충족으로 치지 않습니다."
+    )
     _add_table(
         doc,
-        ["항목", "기준", "실제값", "판정", "근거"],
-        [[f"{i.letter} {i.name}", i.criterion, i.actual, i.verdict.value, i.evidence]
+        ["항목", "기준", "실제값", "판정", "세부 조건 · 근거"],
+        [[f"{i.letter} {i.name}", i.criterion, i.actual, i.verdict.value, i.detail]
          for i in a.canslim.items],
+        widths_cm=[2.0, 3.2, 2.5, 1.9, 6.4],   # A4 본문 폭 ≈ 16cm — 근거 칸을 가장 넓게
+        font_pt=9,
     )
 
     # ── 밸류에이션 ────────────────────────────────────────────────────
@@ -169,17 +187,19 @@ def build_report(a) -> bytes:
     # ── 한계와 면책 ───────────────────────────────────────────────────
     doc.add_heading("이 분석의 한계", level=1)
     limits = [
-        "오닐 원본 RS Rating(1~99점)이 아니라 시장 지수 대비 초과수익 여부로 L을 판정합니다.",
+        "오닐 원본 RS Rating(1~99점)이 아니라 시장 지수 대비 +20%p 이상 초과수익과 종목 추세로 L을 판정합니다.",
         "N(New)의 재료는 뉴스 제목을 키워드로 자동 분류한 것이라 사람의 판단을 대신할 수 없습니다.",
-        "S는 유통주식수(float)를 반영하지 못해 거래량 급증으로 대체했습니다.",
+        "S는 유통주식수(float)를 반영하지 못해 상승일/하락일 거래량 비율과 최근 거래량 증가로 대체했습니다.",
+        "M의 분산일은 지수 거래량으로 셉니다. 지수 거래량이 없으면 판단불가입니다.",
     ]
     if usd:
         limits += [
-            "I는 기관 보유 비중의 현재 값만 있어 '증가 추세'는 판정할 수 없습니다.",
+            "I는 기관 보유 비중의 현재 값만 있어 '증가 추세'는 판정할 수 없습니다 (판단불가).",
             "야후 파이낸스 비공식 라이브러리(yfinance)에 의존해, 형식이 바뀌면 값이 달라질 수 있습니다.",
         ]
     else:
         limits += [
+            "I는 기관 보유 비중 대신 외국인 소진율 추세와 네이버가 주는 최근 며칠의 기관 순매수로 판정합니다.",
             "Q+2는 연간 컨센서스에서 역산한 추정치라 신뢰도가 한 단계 낮습니다.",
             "네이버 비공식 API에 의존해, 형식이 바뀌면 값이 달라질 수 있습니다.",
         ]

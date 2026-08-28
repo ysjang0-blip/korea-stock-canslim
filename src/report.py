@@ -203,6 +203,8 @@ def build_report(a) -> bytes:
             "Q+2는 연간 컨센서스에서 역산한 추정치라 신뢰도가 한 단계 낮습니다.",
             "네이버 비공식 API에 의존해, 형식이 바뀌면 값이 달라질 수 있습니다.",
         ]
+    if getattr(a, "eps_history_note", ""):
+        limits.append(a.eps_history_note + ".")
     for line in limits:
         doc.add_paragraph(line, style="List Bullet")
 

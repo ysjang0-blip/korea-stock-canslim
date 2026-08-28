@@ -10,6 +10,7 @@ from src.canslim import (
     analyze, days_since_new_high, distribution_days, relative_strength, weighted_return,
 )
 from src.fundamentals import parse_finance, parse_snapshot
+from src.eps_history import EPS_REPORTED
 from src.models import SubCheck, Verdict, verdict_of
 from src.newness import Newness, NewsItem
 from src.valuation import compute_growth
@@ -153,6 +154,29 @@ class TestC최근분기:
         result = run(snapshot, quarterly, annual, rising_stock, flat_index)
         assert item(result, "C").verdict is Verdict.UNKNOWN
         assert check(result, "C2").passed is None
+
+    def test_재무표가_5분기뿐이면_야후_발표_EPS로_C2까지_판정한다(self, snapshot, quarterly, annual,
+                                                    rising_stock, flat_index):
+        """삼성 기본 fixture(2025.03~)에 발표 EPS 행을 붙이면 2024.12 가 생겨 C2 를 판정할 수 있다."""
+        quarterly.rows[EPS_REPORTED] = {
+            "202412": 1116.0, "202503": 1192.0, "202506": 737.0, "202509": 1802.0,
+            "202512": 2909.0, "202603": 7123.0,
+        }
+        result = run(snapshot, quarterly, annual, rising_stock, flat_index)
+        c = item(result, "C")
+        assert c.verdict is Verdict.PASS
+        assert "[발표EPS]" in check(result, "C1").label
+        assert check(result, "C2").passed is True          # 2,909 vs 1,116 = +160%
+        assert "+497.6%" in check(result, "C1").actual     # 7,123 vs 1,192 — 발표끼리 비교
+        assert "야후 실적 발표 EPS" in c.evidence
+        assert "6,993원" in check(result, "C3").actual     # C3 는 여전히 재무표 EPS
+
+    def test_발표_EPS에_최신_분기가_없으면_쓰지_않는다(self, snapshot, quarterly, annual,
+                                            rising_stock, flat_index):
+        quarterly.rows[EPS_REPORTED] = {"202412": 1116.0, "202503": 1192.0, "202512": 2909.0}
+        result = run(snapshot, quarterly, annual, rising_stock, flat_index)
+        assert "[발표EPS]" not in check(result, "C1").label
+        assert item(result, "C").verdict is Verdict.UNKNOWN
 
     def test_전년比_미달이면_불합격이지만_수익증가_종목은_EPS를_보여준다(
             self, snapshot, annual, rising_stock, flat_index):

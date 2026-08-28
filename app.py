@@ -191,6 +191,8 @@ st.markdown(
     f'{rows}</table></div>',
     unsafe_allow_html=True,
 )
+if getattr(a, "eps_history_note", ""):
+    st.caption(f"ℹ️ {a.eps_history_note}")
 
 # ─────────────────────────────────────────────────────────── 밸류에이션
 

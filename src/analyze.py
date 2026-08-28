@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from . import canslim, fundamentals, newness as newness_mod, prices, tickers, valuation, yahoo
+from . import canslim, eps_history, fundamentals, newness as newness_mod, prices, tickers, valuation, yahoo
 from .fundamentals import FinancialTable, Snapshot
 from .models import CanslimResult
 from .newness import Newness
@@ -36,6 +36,7 @@ class Analysis:
     stock_df: pd.DataFrame
     index_df: pd.DataFrame
     index_name: str
+    eps_history_note: str = ""   # 옛 분기 EPS 보강(야후 발표 이력) 결과 설명
 
 
 def run(query: str) -> Analysis:
@@ -60,8 +61,14 @@ def _run_kr(ref: StockRef) -> Analysis:
 
     fresh = newness_mod.load(ref.code, researches=snap.researches)
 
+    # 네이버는 확정 분기를 5개만 주므로 C2(2분기 연속) 판정용 옛 분기 EPS 를 야후 발표 이력으로 보강
+    yahoo_symbol = f"{ref.code}{'.KQ' if index_name == 'KOSDAQ' else '.KS'}"
+    ext = eps_history.extend_quarterly(
+        quarterly, eps_history.fetch_reported_eps(yahoo_symbol, eps_history.CALENDAR_QUARTER_MONTHS)
+    )
+
     return _assemble(ref, snap, quarterly, annual, stock_df, index_df, index_name, fresh,
-                     close_time=prices.KR_MARKET_CLOSE, tz=prices.KST)
+                     close_time=prices.KR_MARKET_CLOSE, tz=prices.KST, eps_note=ext.note)
 
 
 def _run_us(ref: StockRef) -> Analysis:
@@ -70,8 +77,12 @@ def _run_us(ref: StockRef) -> Analysis:
 
     fresh = newness_mod.detect(disclosures=[], articles=articles, researches=[])
 
+    # 야후 재무표도 확정 분기 5개뿐 — 회계 분기 말 월은 회사마다 달라 재무표에서 읽는다
+    months = tuple(sorted({p.month for p in quarterly.actual_periods()})) or eps_history.CALENDAR_QUARTER_MONTHS
+    ext = eps_history.extend_quarterly(quarterly, eps_history.fetch_reported_eps(ref.code, months))
+
     return _assemble(ref, snap, quarterly, annual, stock_df, index_df, yahoo.SP500_NAME, fresh,
-                     close_time=US_MARKET_CLOSE, tz=US_TZ)
+                     close_time=US_MARKET_CLOSE, tz=US_TZ, eps_note=ext.note)
 
 
 def _assemble(
@@ -85,6 +96,7 @@ def _assemble(
     fresh: Newness,
     close_time: dt.time,
     tz: dt.tzinfo,
+    eps_note: str = "",
 ) -> Analysis:
     val = valuation.compute_valuation(snap, quarterly, annual)
 
@@ -109,4 +121,5 @@ def _assemble(
         stock_df=stock_df,
         index_df=index_df,
         index_name=index_name,
+        eps_history_note=eps_note,
     )

@@ -25,6 +25,7 @@ from .fundamentals import FinancialTable, Period, Snapshot
 from .models import CanslimItem, CanslimResult, SubCheck, Verdict, verdict_of
 from .newness import Newness
 from .prices import moving_average, pct_return
+from .eps_history import EPS_REPORTED
 from .valuation import EPS, REVENUE, GrowthRates, yoy
 
 # ── 기준값 (docs/canslim_criteria.md 와 같아야 한다)
@@ -141,14 +142,36 @@ def _yoy_check(quarterly: FinancialTable, row: str, idx: int, code: str, label: 
     return SubCheck(code, label, f"{rate:+,.1f}%", rate >= min_pct), rate, target
 
 
+def _year_ago(p: Period) -> str:
+    return f"{p.year - 1}{p.month:02d}"
+
+
+def _c_eps_row(quarterly: FinancialTable) -> tuple[str, bool]:
+    """C1·C2 에 쓸 EPS 행. 재무표 EPS 로 C2 까지 판정할 수 있으면 그것을, 아니면(재무표가 5분기뿐)
+    야후 발표 EPS 이력(`EPS(발표)`)이 최신·직전 분기와 각각의 전년 동기를 모두 갖고 있을 때 그것을 쓴다.
+    같은 행끼리만 비교하므로 두 출처의 EPS 정의 차이가 증가율에 섞이지 않는다."""
+    periods = _actual_quarters(quarterly, EPS)
+    if len(periods) < 2:
+        return EPS, False
+    latest, prev = periods[-1], periods[-2]
+    if quarterly.value(EPS, _year_ago(prev)) is not None:
+        return EPS, False
+    needed = (latest.key, prev.key, _year_ago(latest), _year_ago(prev))
+    if all(quarterly.value(EPS_REPORTED, k) is not None for k in needed):
+        return EPS_REPORTED, True
+    return EPS, False
+
+
 def _item_c(quarterly: FinancialTable, growth: GrowthRates, snap: Snapshot) -> CanslimItem:
     name = "최근 분기 실적"
     criterion = (
         f"분기 EPS 전년동기比 +{C_EPS_YOY_MIN:.0f}% 이상 2분기 연속 · 직전 분기보다 EPS 증가 · "
         f"분기 매출 전년동기比 +{C_REVENUE_YOY_MIN:.0f}% 이상"
     )
-    c1, rate1, latest = _yoy_check(quarterly, EPS, 0, "C1", "최근 분기 EPS 전년比", C_EPS_YOY_MIN)
-    c2, _, prev = _yoy_check(quarterly, EPS, 1, "C2", "직전 분기 EPS 전년比", C_EPS_YOY_MIN)
+    eps_row, from_reported = _c_eps_row(quarterly)
+    tag = " [발표EPS]" if from_reported else ""
+    c1, rate1, latest = _yoy_check(quarterly, eps_row, 0, "C1", f"최근 분기 EPS 전년比{tag}", C_EPS_YOY_MIN)
+    c2, _, prev = _yoy_check(quarterly, eps_row, 1, "C2", f"직전 분기 EPS 전년比{tag}", C_EPS_YOY_MIN)
 
     if latest is None or prev is None:
         c3 = SubCheck("C3", "직전 분기 대비 EPS", "확정 분기 2개 미만", None)
@@ -156,8 +179,9 @@ def _item_c(quarterly: FinancialTable, growth: GrowthRates, snap: Snapshot) -> C
     else:
         now_eps, prev_eps = quarterly.value(EPS, latest.key), quarterly.value(EPS, prev.key)
         diff = now_eps - prev_eps
+        diff_text = f"{diff:+,.2f}" if snap.currency == "USD" else f"{diff:+,.0f}"
         c3 = SubCheck("C3", f"직전 분기 대비 EPS({prev.label}→{latest.label})",
-                      f"{snap.money(prev_eps)} → {snap.money(now_eps)} ({diff:+,.0f})", diff > 0)
+                      f"{snap.money(prev_eps)} → {snap.money(now_eps)} ({diff_text})", diff > 0)
 
     c4, _, _ = _yoy_check(quarterly, REVENUE, 0, "C4", "최근 분기 매출 전년比", C_REVENUE_YOY_MIN)
     checks = [c1, c2, c3, c4]
@@ -173,6 +197,9 @@ def _item_c(quarterly: FinancialTable, growth: GrowthRates, snap: Snapshot) -> C
             f"수익 증가 중 — 직전 {prev.label} EPS {snap.money(prev_eps)} → 최근 {latest.label} "
             f"EPS {snap.money(now_eps)}. 전년比 문턱은 못 넘었지만 분기 EPS와 매출이 함께 늘고 있습니다"
         )
+    if from_reported:
+        notes.append("C1·C2는 재무표가 5분기뿐이라 야후 실적 발표 EPS 이력으로 판정했습니다 "
+                     "(같은 이력끼리 비교하므로 표의 EPS와 값이 조금 달라도 증가율에는 섞이지 않습니다)")
     if rate1 is not None and rate1 > C_BASE_EFFECT_PCT:
         notes.append("※ 전년 동기 EPS가 매우 낮아 증가율이 과장될 수 있습니다 (기저 효과)")
     if any(c.actual.startswith(("흑자 전환", "적자 지속")) for c in (c1, c2, c4)):

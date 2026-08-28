@@ -34,6 +34,7 @@
 | C5. 기저효과 경고 | 300% 초과면 근거에 경고만 | 유지 (합격은 시키되 "전년 동기가 매우 작아 증가율이 과장될 수 있음" 표시) |
 
 - 판단불가: 전년 같은 분기 자료가 없는 경우
+  - 재무표(네이버·야후)는 확정 분기 5개뿐이라 C2 의 전년 동기는 **야후 실적 발표 이력(Reported EPS)** 으로 보강한다. 겹치는 분기에서 재무표와 20% 넘게 다르면 버리고, 받아들이면 C1·C2 모두 발표 이력끼리 비교한다(화면에 `[발표EPS]` 표시).
 - 수익증가 종목 : C1,C2는 만족하지 못하더라도 C3과 C4가 만족되는 경우는 최근분기에 직전분기와 최근분기의 EPS를 표시하라.
 - 한국 주의: 네이버는 확정 분기 반영이 한 분기 늦을 수 있음 (기존 한계 그대로).
 
@@ -128,6 +129,6 @@
 
 ## 구현 메모
 
-- 수정 파일: `src/canslim.py` (판정), `src/models.py` (세부 조건 결과·종합 판정 필드 추가), `src/valuation.py` (직전 분기 YoY·매출 YoY 는 이미 `GrowthRates`에 일부 있음 — 매출 YoY 추가), `app.py` / `src/report.py` (표시), `README.md`, `tests/test_canslim.py` (+ conftest fixture 보강).
+- 수정 파일: `src/canslim.py` (판정), `src/models.py` (세부 조건 결과·종합 판정 필드 추가), `src/valuation.py` (직전 분기 YoY·매출 YoY 는 이미 `GrowthRates`에 일부 있음 — 매출 YoY 추가), `app.py` / `src/report.py` (표시), `README.md`, `tests/test_canslim.py` (+ conftest fixture 보강), `src/eps_history.py` (야후 발표 EPS 이력 보강 + 교차검증).
 - 새로 받을 데이터 없이 이미 로드된 것만 사용: 매출액(재무표), 기관 순매수(`snap.deal_trend`, 네이버가 최근 5거래일 안팎만 줌), 지수 거래량(코스피·코스닥·S&P500 모두 있음), 종목 50/200일선.
 - 검증: 단위 테스트(각 세부 조건 경계값) → 삼성전자·AAPL 실제 실행으로 결과 확인 → 커밋·푸시 → `/healthz` 200.

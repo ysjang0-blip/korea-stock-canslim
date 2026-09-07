@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from . import canslim, eps_history, fundamentals, newness as newness_mod, prices, tickers, valuation, yahoo
+from . import canslim, eps_history, fundamentals, newness as newness_mod, prices, segments as segments_mod, tickers, valuation, yahoo
 from .fundamentals import FinancialTable, Snapshot
 from .models import CanslimResult
 from .newness import Newness
@@ -37,6 +37,7 @@ class Analysis:
     index_df: pd.DataFrame
     index_name: str
     eps_history_note: str = ""   # 옛 분기 EPS 보강(야후 발표 이력) 결과 설명
+    segments: segments_mod.SegmentBreakdown | None = None  # 사업부문별 매출 구성 (한국만, 없으면 None)
 
 
 def run(query: str) -> Analysis:
@@ -68,7 +69,8 @@ def _run_kr(ref: StockRef) -> Analysis:
     )
 
     return _assemble(ref, snap, quarterly, annual, stock_df, index_df, index_name, fresh,
-                     close_time=prices.KR_MARKET_CLOSE, tz=prices.KST, eps_note=ext.note)
+                     close_time=prices.KR_MARKET_CLOSE, tz=prices.KST, eps_note=ext.note,
+                     segs=segments_mod.load(ref.code))
 
 
 def _run_us(ref: StockRef) -> Analysis:
@@ -97,6 +99,7 @@ def _assemble(
     close_time: dt.time,
     tz: dt.tzinfo,
     eps_note: str = "",
+    segs: segments_mod.SegmentBreakdown | None = None,
 ) -> Analysis:
     val = valuation.compute_valuation(snap, quarterly, annual)
 
@@ -122,4 +125,5 @@ def _assemble(
         index_df=index_df,
         index_name=index_name,
         eps_history_note=eps_note,
+        segments=segs,
     )

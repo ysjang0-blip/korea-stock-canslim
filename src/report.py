@@ -13,6 +13,7 @@ from docx import Document
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt
 
+from . import segments as segments_mod
 from .models import Source, Verdict
 
 MALGUN = "맑은 고딕"
@@ -183,6 +184,37 @@ def build_report(a) -> bytes:
                        fmt(d.values.get("매출액"), rev_q_unit, rev_q_digits, rev_q_scale),
                        f"{_SOURCE_MARK[Source.DERIVED]} ({d.method})"])
     _add_table(doc, ["분기", "EPS", "매출액", "구분"], q_rows)
+
+    # ── 사업부문별 매출 구성 (한국 종목만 — 출처가 자료를 줄 때) ──────
+    segs = getattr(a, "segments", None)
+    if segs is not None:
+        doc.add_heading("사업부문별 매출 구성", level=1)
+
+        annual_actual = a.annual.actual_periods()
+        rev_won = None
+        if annual_actual:
+            rev_value = a.annual.value("매출액", annual_actual[-1].key)
+            if rev_value is not None:
+                rev_won = rev_value * a.annual.money_unit
+
+        seg_rows = []
+        for rank, s in enumerate(segs.items, start=1):
+            est = segments_mod.amount_text(rev_won * s.share_pct / 100 if rev_won else None)
+            name = f"{s.name} ★" if rank == 1 else s.name
+            seg_rows.append([str(rank), name, f"{s.share_pct:,.1f}%", est])
+        _add_table(doc, ["순위", "사업부문", "매출 비중", "추정 매출액"], seg_rows)
+
+        period = f" (기준: {segs.period_label})" if segs.period_label else ""
+        rev_base = (f"최근 확정 연간 매출 {segments_mod.amount_text(rev_won)}"
+                    f"({annual_actual[-1].label})에 비중을 곱한 추정치" if rev_won
+                    else "연간 매출 자료가 없어 금액은 표시하지 못했습니다")
+        note = doc.add_paragraph()
+        note.add_run(
+            f"출처: 네이버 종목분석의 주요제품 매출구성{period} · ★ 매출 비중 1위. "
+            f"추정 매출액은 {rev_base}이며, 내부거래 조정 때문에 '기타'가 음수이거나 "
+            "비중 합계가 100%와 다를 수 있습니다. 부문별 이익률과 제품 출시일은 "
+            "회사가 공개하지 않아 제공하지 못합니다."
+        ).font.size = Pt(9)
 
     # ── 한계와 면책 ───────────────────────────────────────────────────
     doc.add_heading("이 분석의 한계", level=1)

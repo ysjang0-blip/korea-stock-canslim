@@ -281,15 +281,15 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ─────────────────────────────────────────────── 사업부문별 매출 구성
+# ─────────────────────────────────────────── 주요 제품·서비스 매출 구성
 
-st.markdown("### 사업부문별 매출 구성")
+st.markdown("### 주요 제품·서비스 매출 구성")
 
 if usd:
-    st.caption("미국 종목은 부문별 매출을 주는 무료 데이터 출처가 없어 이 표를 제공하지 않습니다. "
+    st.caption("미국 종목은 제품별 매출을 주는 무료 데이터 출처가 없어 이 표를 제공하지 않습니다. "
                "회사 연차보고서(10-K)의 사업 부문(Segment) 절을 참고하세요.")
 elif a.segments is None:
-    st.caption("이 종목의 부문별 매출 구성 자료를 받아오지 못했습니다. "
+    st.caption("이 종목의 제품·서비스별 매출 구성 자료를 받아오지 못했습니다. "
                "출처(네이버 종목분석)에 자료가 없는 종목이거나 일시적 오류일 수 있습니다.")
 else:
     from src import segments as segments_mod
@@ -306,21 +306,25 @@ else:
         est = segments_mod.amount_text(_rev_won * s.share_pct / 100 if _rev_won else None)
         star = " ⭐" if rank == 1 else ""
         name = f"<b>{s.name}</b>" if rank == 1 else s.name
+        desc = s.description or "—"
         seg_rows += (f"<tr><td class='num'>{rank}</td><td>{name}{star}</td>"
                      f"<td class='num'>{s.share_pct:,.1f}%</td>"
-                     f"<td class='num'>{est}</td></tr>")
+                     f"<td class='num'>{est}</td>"
+                     f"<td class='dim'>{desc}</td></tr>")
     st.markdown(
         f'<div class="panel"><table class="grid">'
-        f'<tr><th>순위</th><th>사업부문</th><th style="text-align:right">매출 비중</th>'
-        f'<th style="text-align:right">추정 매출액</th></tr>{seg_rows}</table></div>',
+        f'<tr><th>순위</th><th>제품·서비스</th><th style="text-align:right">매출 비중</th>'
+        f'<th style="text-align:right">추정 매출액</th><th>설명</th></tr>{seg_rows}</table></div>',
         unsafe_allow_html=True,
     )
     _period = f" (기준: {a.segments.period_label})" if a.segments.period_label else ""
     _rev_base = (f"최근 확정 연간 매출 {segments_mod.amount_text(_rev_won)}({_annual_actual[-1].label})에 "
                  "비중을 곱한 추정치" if _rev_won else "연간 매출 자료가 없어 금액은 표시하지 못했습니다")
     st.caption(f"출처: 네이버 종목분석의 주요제품 매출구성{_period} · ⭐ 매출 비중 1위. "
-               f"추정 매출액은 {_rev_base}이며, 내부거래 조정 때문에 '기타'가 음수이거나 "
-               "비중 합계가 100%와 다를 수 있습니다. 부문별 이익률과 제품 출시일은 "
+               "회사가 제품을 부문으로 묶어 공시하면(예: 삼성전자 DS·DX) 부문 이름으로 보이며, "
+               "설명은 네이버 기업개요 문장에서 자동으로 뽑은 것이라 없을 수 있습니다(—). "
+               f"추정 매출액은 {_rev_base}이고, 내부거래 조정 때문에 '기타'가 음수이거나 "
+               "비중 합계가 100%와 다를 수 있습니다. 제품별 이익률과 출시일은 "
                "회사가 공개하지 않아 제공하지 못합니다.")
 
 # ─────────────────────────────────────────────────────────── 차트

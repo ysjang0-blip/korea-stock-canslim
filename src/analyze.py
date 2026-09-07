@@ -70,7 +70,7 @@ def _run_kr(ref: StockRef) -> Analysis:
 
     return _assemble(ref, snap, quarterly, annual, stock_df, index_df, index_name, fresh,
                      close_time=prices.KR_MARKET_CLOSE, tz=prices.KST, eps_note=ext.note,
-                     segs=segments_mod.load(ref.code))
+                     segs=segments_mod.load(ref.code, summary=snap.summary))
 
 
 def _run_us(ref: StockRef) -> Analysis:

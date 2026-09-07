@@ -31,8 +31,9 @@ _PERIOD_RE = re.compile(r"매출구성\s*\(\s*(\d{4})\s*/\s*(\d{2})\s*\)")
 
 @dataclass(frozen=True)
 class SegmentShare:
-    name: str        # 부문 이름 (회사가 공시에 쓰는 명칭 그대로. 예: DS, DX, Harman)
+    name: str        # 제품·부문 이름 (회사가 공시에 쓰는 명칭 그대로. 예: DS, DX, Harman)
     share_pct: float  # 매출 비중 %. 내부거래 조정 항목은 음수일 수 있다
+    description: str = ""  # 기업개요 문장에서 뽑은 설명. 예: "메모리 반도체와 Foundry 사업"
 
 
 @dataclass(frozen=True)
@@ -81,9 +82,52 @@ def parse_segments(page_html: str) -> SegmentBreakdown | None:
     return SegmentBreakdown(period_label=label, items=tuple(items))
 
 
-def load(code: str) -> SegmentBreakdown | None:
-    """종목코드로 매출구성을 받아온다. 부가 정보라 어떤 실패도 분석 전체를 막지 않는다 (None)."""
+def describe_items(names: list[str], summary_text: str) -> dict[str, str]:
+    """기업개요 문장에서 각 제품·부문의 설명을 잘라낸다.
+
+    네이버 기업개요는 "DX 부문은 TV, 가전, 스마트폰, DS는 메모리 반도체와 Foundry 사업, ..."
+    같은 문체라, '이름 + (부문) + 조사(은/는/이/가)'를 닻으로 삼아 다음 이름의 닻(또는 문장 끝)까지를
+    그 이름의 설명으로 본다. 조사 없이 스치듯 언급된 곳("Harman 산하 308개 종속기업")은 설명이 아니므로
+    닻으로 치지 않는다. 못 찾으면 빈 문자열 — 이름만으로 뜻이 통하는 부문(차량·금융 등)은 원래 없어도 된다.
+    """
+    result: dict[str, str] = {}
+    cleaned = {}  # 닻으로 쓸 이름: "에코프로비엠 (연결)" → "에코프로비엠"
+    for name in names:
+        bare = re.sub(r"\s*\(.*?\)\s*", "", name).strip()
+        if bare and bare != "기타" and len(bare) >= 2:
+            cleaned[name] = bare
+
+    for sentence in re.split(r"(?<=\.)\s+", summary_text or ""):
+        anchors = []  # (시작, 설명 시작, 원래 이름)
+        for name, bare in cleaned.items():
+            m = re.search(rf"{re.escape(bare)}\s*(?:부문)?\s*(?:은|는|이|가)\s+", sentence)
+            if m:
+                anchors.append((m.start(), m.end(), name))
+        anchors.sort()
+        for i, (_, desc_start, name) in enumerate(anchors):
+            if name in result:
+                continue
+            desc_end = anchors[i + 1][0] if i + 1 < len(anchors) else len(sentence)
+            desc = sentence[desc_start:desc_end].strip().strip(",").strip()
+            if len(desc) >= 4:
+                result[name] = desc
+    return result
+
+
+def load(code: str, summary: str = "") -> SegmentBreakdown | None:
+    """종목코드로 매출구성을 받아온다. 부가 정보라 어떤 실패도 분석 전체를 막지 않는다 (None).
+
+    summary 를 주면 (네이버 기업개요 문장) 각 제품·부문에 설명을 붙인다.
+    """
     try:
-        return parse_segments(naver.fetch_text(PAGE_URL.format(code=code), ttl=TTL))
+        got = parse_segments(naver.fetch_text(PAGE_URL.format(code=code), ttl=TTL))
+        if got is None or not summary:
+            return got
+        descs = describe_items([s.name for s in got.items], summary)
+        items = tuple(
+            SegmentShare(name=s.name, share_pct=s.share_pct, description=descs.get(s.name, ""))
+            for s in got.items
+        )
+        return SegmentBreakdown(period_label=got.period_label, items=items)
     except Exception:
         return None

@@ -106,6 +106,54 @@ class Test없는경우:
         assert segments.load("005930") is None
 
 
+SAMSUNG_SUMMARY = (
+    "동사는 1969년 설립된 글로벌 전자 기업으로, DX, DS, SDC, Harman 산하 308개 종속기업으로 구성됨. "
+    "DX 부문은 TV, 가전, 스마트폰, DS는 메모리 반도체와 Foundry 사업, SDC는 OLED 패널, "
+    "Harman은 전장부품·오디오 사업 운영함. "
+    "동사는 AI 기술 확대, 선단 공정 개발, 고부가 솔루션 포트폴리오로 제품 차별화에 주력하고 있음."
+)
+
+
+class Test설명추출:
+    def test_삼성전자_문체에서_부문별_설명을_잘라낸다(self):
+        got = segments.describe_items(["DS", "DX", "SDC", "Harman", "기타"], SAMSUNG_SUMMARY)
+        assert got["DX"] == "TV, 가전, 스마트폰"
+        assert got["DS"] == "메모리 반도체와 Foundry 사업"
+        assert got["SDC"] == "OLED 패널"
+        assert got["Harman"] == "전장부품·오디오 사업 운영함."
+
+    def test_조사_없이_스친_언급은_설명이_아니다(self):
+        # 첫 문장의 "DX, DS, SDC, Harman 산하 ..."에서 잘못 뽑으면 안 된다
+        got = segments.describe_items(["Harman"], SAMSUNG_SUMMARY)
+        assert "산하" not in got["Harman"]
+
+    def test_기타는_설명을_찾지_않는다(self):
+        assert "기타" not in segments.describe_items(["기타"], SAMSUNG_SUMMARY)
+
+    def test_개요에_없는_이름은_빈_결과(self):
+        assert segments.describe_items(["차량"], SAMSUNG_SUMMARY) == {}
+
+    def test_괄호_붙은_이름도_찾는다(self):
+        text = "에코프로비엠은 이차전지 양극재 사업 운영함."
+        got = segments.describe_items(["에코프로비엠 (연결)"], text)
+        assert got["에코프로비엠 (연결)"] == "이차전지 양극재 사업 운영함."
+
+    def test_빈_개요면_빈_결과(self):
+        assert segments.describe_items(["DS"], "") == {}
+
+    def test_load가_설명을_붙인다(self, monkeypatch):
+        monkeypatch.setattr(segments.naver, "fetch_text", lambda url, ttl: SAMSUNG_PAGE)
+        got = segments.load("005930", summary=SAMSUNG_SUMMARY)
+        by_name = {s.name: s for s in got.items}
+        assert by_name["DS"].description == "메모리 반도체와 Foundry 사업"
+        assert by_name["기타"].description == ""
+
+    def test_load에_summary가_없어도_동작(self, monkeypatch):
+        monkeypatch.setattr(segments.naver, "fetch_text", lambda url, ttl: SAMSUNG_PAGE)
+        got = segments.load("005930")
+        assert all(s.description == "" for s in got.items)
+
+
 class Test금액표시:
     def test_조원(self):
         assert segments.amount_text(184.3e12) == "184.3조원"

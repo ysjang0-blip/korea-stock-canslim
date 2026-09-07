@@ -185,10 +185,10 @@ def build_report(a) -> bytes:
                        f"{_SOURCE_MARK[Source.DERIVED]} ({d.method})"])
     _add_table(doc, ["분기", "EPS", "매출액", "구분"], q_rows)
 
-    # ── 사업부문별 매출 구성 (한국 종목만 — 출처가 자료를 줄 때) ──────
+    # ── 주요 제품·서비스 매출 구성 (한국 종목만 — 출처가 자료를 줄 때) ──
     segs = getattr(a, "segments", None)
     if segs is not None:
-        doc.add_heading("사업부문별 매출 구성", level=1)
+        doc.add_heading("주요 제품·서비스 매출 구성", level=1)
 
         annual_actual = a.annual.actual_periods()
         rev_won = None
@@ -201,8 +201,9 @@ def build_report(a) -> bytes:
         for rank, s in enumerate(segs.items, start=1):
             est = segments_mod.amount_text(rev_won * s.share_pct / 100 if rev_won else None)
             name = f"{s.name} ★" if rank == 1 else s.name
-            seg_rows.append([str(rank), name, f"{s.share_pct:,.1f}%", est])
-        _add_table(doc, ["순위", "사업부문", "매출 비중", "추정 매출액"], seg_rows)
+            seg_rows.append([str(rank), name, f"{s.share_pct:,.1f}%", est, s.description or "—"])
+        _add_table(doc, ["순위", "제품·서비스", "매출 비중", "추정 매출액", "설명"], seg_rows,
+                   widths_cm=[1.2, 3.4, 2.0, 2.7, 6.7], font_pt=9)
 
         period = f" (기준: {segs.period_label})" if segs.period_label else ""
         rev_base = (f"최근 확정 연간 매출 {segments_mod.amount_text(rev_won)}"
@@ -211,9 +212,10 @@ def build_report(a) -> bytes:
         note = doc.add_paragraph()
         note.add_run(
             f"출처: 네이버 종목분석의 주요제품 매출구성{period} · ★ 매출 비중 1위. "
-            f"추정 매출액은 {rev_base}이며, 내부거래 조정 때문에 '기타'가 음수이거나 "
-            "비중 합계가 100%와 다를 수 있습니다. 부문별 이익률과 제품 출시일은 "
-            "회사가 공개하지 않아 제공하지 못합니다."
+            "회사가 제품을 부문으로 묶어 공시하면 부문 이름으로 보이며, 설명은 네이버 기업개요 "
+            f"문장에서 자동으로 뽑은 것이라 없을 수 있습니다. 추정 매출액은 {rev_base}이고, "
+            "내부거래 조정 때문에 '기타'가 음수이거나 비중 합계가 100%와 다를 수 있습니다. "
+            "제품별 이익률과 출시일은 회사가 공개하지 않아 제공하지 못합니다."
         ).font.size = Pt(9)
 
     # ── 한계와 면책 ───────────────────────────────────────────────────

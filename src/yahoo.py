@@ -248,6 +248,14 @@ def build_snapshot(
         currency="USD",
         source_name="야후",
         inst_holding_pct=inst_pct * 100.0 if inst_pct is not None else None,
+        shares_outstanding=_num(info.get("sharesOutstanding")),
+        debt_to_equity=_num(info.get("debtToEquity")),  # 야후는 이미 % 값
+        fcf=_num(info.get("freeCashflow")),
+        # dividendYield 는 yfinance 버전에 따라 비율/퍼센트가 오락가락해서 주당 배당금으로 직접 계산
+        dividend_yield=(
+            _num(info.get("dividendRate")) / price * 100.0
+            if price and _num(info.get("dividendRate")) is not None else None
+        ),
     )
 
 
@@ -274,7 +282,8 @@ def load_all(symbol: str) -> tuple[Snapshot, FinancialTable, FinancialTable, lis
         except Exception:
             targets = None
 
-        price_df = normalize_history(t.history(period="18mo", auto_adjust=True))
+        # 4년 치 — 밸류에이션 밴드(최근 3개 연도 고점·저점) 계산용
+        price_df = normalize_history(t.history(period="4y", auto_adjust=True))
         articles = normalize_news(t.news)
     except YahooFetchError:
         raise
@@ -292,7 +301,7 @@ def load_all(symbol: str) -> tuple[Snapshot, FinancialTable, FinancialTable, lis
     return snap, quarterly, annual, articles, price_df
 
 
-def index_history(period: str = "18mo") -> pd.DataFrame:
+def index_history(period: str = "4y") -> pd.DataFrame:
     """S&P500 일봉 (L·M 판정용)."""
     import yfinance as yf
 

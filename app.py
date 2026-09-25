@@ -10,7 +10,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from src import analyze, charts, report, tickers
+from src import analyze, charts, handoff, report, tickers
 from src.charts import C
 from src.models import Source, Verdict
 
@@ -125,6 +125,36 @@ snap, val = a.snap, a.valuation
 st.subheader(f"{snap.name} · {a.ref.code} · {a.ref.market}")
 
 usd = snap.currency == "USD"
+
+# ── 요약 박스 (지침 v3 Step 0) — 상세 산식·근거는 아래 각 섹션에 있다 ──
+_OPINION_COLOR = {"매수": C["good"], "조건부 매수 후보": "#c8a200",
+                  "중립": C["muted"], "매도/비중 축소": C["critical"], "판단 보류": C["muted"]}
+_op, _tg, _ver = a.opinion, a.target, a.verification
+_cans_color = "#1baf7a" if a.canslim.qualified else "#c0392b"
+_target_text = (f"{snap.money(_tg.bear)} · {snap.money(_tg.base)} · {snap.money(_tg.bull)}"
+                if _tg.ok else "산출 불가")
+_gap_text = (f"Base 괴리율 {_tg.base_gap:+.1f}%" if _tg.ok
+             else (_tg.note if len(_tg.note) <= 40 else _tg.note[:40] + "…"))
+
+
+def _sum_cell(title: str, body: str) -> str:
+    return (f'<div style="min-width:180px"><div class="n">{title}</div>'
+            f'<div style="font-size:14px;font-weight:600;margin-top:2px">{body}</div></div>')
+
+
+st.markdown(
+    '<div class="panel" style="display:flex;gap:28px;flex-wrap:wrap;align-items:center">'
+    + _sum_cell("CANSLIM", f'<span style="color:{_cans_color}">'
+                f'{"🟢" if a.canslim.qualified else "🔴"} {a.canslim.summary}</span>'
+                f'<div class="n" style="margin-top:2px">{a.canslim.tally}</div>')
+    + _sum_cell("투자의견 (규칙 기반)",
+                f'<span style="color:{_OPINION_COLOR.get(_op.label, C["muted"])}">{_op.text}</span>')
+    + _sum_cell("목표주가 12개월 (Bear·Base·Bull)",
+                f'{_target_text}<div class="n" style="margin-top:2px">{_gap_text}</div>')
+    + _sum_cell("데이터 신뢰도", f'<span class="n" style="font-size:13px">{_ver.tally}</span>')
+    + "</div>",
+    unsafe_allow_html=True,
+)
 change_txt = None
 if snap.change is not None and snap.change_pct is not None:
     change_txt = (f"{snap.change:+,.2f}달러 ({snap.change_pct:+.2f}%)" if usd
@@ -236,11 +266,15 @@ else:
     eps_unit, eps_digits = "원", 0
     rev_unit, rev_digits, rev_scale = "조원", 1, 1e12
 
+_pbr_cells = (f"<td class='num'>{snap.pbr:,.2f}배</td>" if snap.pbr else "<td class='num'>—</td>") \
+    + "<td class='num'>—</td>" * (len(val.columns) - 1)
+
 body = (
     metric_row("PER", "per", "배")
     + metric_row("PSR", "psr", "배")
     + metric_row("PEG", "peg", "")
     + metric_row("ROE", "roe", "%")
+    + f"<tr><td><b>PBR</b></td>{_pbr_cells}</tr>"
     + metric_row(f"EPS (12개월)", "eps_ttm", eps_unit, eps_digits)
     + metric_row(f"매출 (12개월)", "revenue_ttm", rev_unit, rev_digits, rev_scale)
     + "<tr><td class='dim'>산출 근거</td>"
@@ -280,6 +314,103 @@ st.markdown(
     f'</div>',
     unsafe_allow_html=True,
 )
+
+# ─────────────────────────────── 목표주가·투자의견 (지침 v3 Step 5·9·10)
+
+st.markdown("### 목표주가와 투자의견")
+
+_metric_reason = ("TTM 이익이 적자라 PER이 성립하지 않아 주당매출(PSR) 밴드로 대체"
+                  if a.band.metric == "PSR" else "TTM 이익이 흑자라 PER 밴드 사용")
+st.caption(f"평가지표: **{a.band.metric}** ({_metric_reason}) · "
+           f"기준 이익: {_tg.basis.base_label or '—'} — CANSLIM 대상은 이익 변화가 뚜렷해 "
+           "컨센서스(12개월 선행)를 기본으로 합니다.")
+
+if a.band.years:
+    _band_rows = "".join(
+        f"<tr><td>{y.year}년</td><td class='num'>{snap.money(y.high)}</td>"
+        f"<td class='num'>{snap.money(y.low)}</td>"
+        f"<td class='num'>{y.lower:,.1f} ~ {y.upper:,.1f}배</td></tr>"
+        for y in a.band.years
+    ) + (f"<tr><td><b>평균</b></td><td class='num'>—</td><td class='num'>—</td>"
+         f"<td class='num'><b>하단 {a.band.lower:,.1f} · 중간 {a.band.mid:,.1f} · "
+         f"상단 {a.band.upper:,.1f}배</b></td></tr>")
+    _scn = [("Bear", _tg.bear, _tg.bear_gap, f"하단 {a.band.lower:,.1f}배", _tg.basis.conservative_label),
+            ("Base", _tg.base, _tg.base_gap, f"중간 {a.band.mid:,.1f}배", _tg.basis.base_label),
+            ("Bull", _tg.bull, _tg.bull_gap, f"상단 {a.band.upper:,.1f}배", _tg.basis.optimistic_label)]
+    _target_rows = "".join(
+        f"<tr><td><b>{name}</b></td><td class='dim'>{mult} × {basis or '—'}</td>"
+        f"<td class='num'>{snap.money(t)}</td>"
+        f"<td class='num'>{f'{g:+.1f}%' if g is not None else '—'}</td></tr>"
+        for name, t, g, mult, basis in _scn
+    )
+    _sens_head = "".join(f"<th style='text-align:right'>{lb}</th>"
+                         for lb in ("이익: 보수", "기준", "낙관"))
+    _sens_rows = "".join(
+        f"<tr><td class='dim'>{mlb}</td>"
+        + "".join(f"<td class='num'>{snap.money(v) if v is not None else '—'}</td>" for v in row)
+        + "</tr>"
+        for mlb, row in zip(("멀티플 하단", "중간", "상단"), _tg.sensitivity)
+    )
+    col_l, col_r = st.columns(2)
+    col_l.markdown(
+        f'<div class="panel"><b>밸류에이션 밴드</b> — 연도별 고점·저점 ÷ 그 해 '
+        f'{"EPS" if a.band.metric == "PER" else "주당매출"}'
+        f'<table class="grid" style="margin-top:6px"><tr><th>연도</th>'
+        f'<th style="text-align:right">고점</th><th style="text-align:right">저점</th>'
+        f'<th style="text-align:right">{a.band.metric} 밴드</th></tr>{_band_rows}</table></div>',
+        unsafe_allow_html=True,
+    )
+    col_r.markdown(
+        f'<div class="panel"><b>목표주가 (12개월)</b>'
+        f'<table class="grid" style="margin-top:6px"><tr><th>시나리오</th><th>산식</th>'
+        f'<th style="text-align:right">목표가</th><th style="text-align:right">괴리율</th></tr>'
+        f'{_target_rows}</table>'
+        f'<div class="n" style="margin-top:8px">민감도 (멀티플 × 이익)</div>'
+        f'<table class="grid"><tr><th></th>{_sens_head}</tr>{_sens_rows}</table></div>',
+        unsafe_allow_html=True,
+    )
+else:
+    st.caption(f"목표주가 산출 불가 — {' · '.join(a.band.notes)}")
+
+for _n in a.band.notes:
+    st.caption(f"⚠️ {_n}")
+
+_op_color = _OPINION_COLOR.get(_op.label, C["muted"])
+st.markdown(
+    f'<div class="panel"><span style="color:{_op_color};font-weight:700;font-size:1.1rem">'
+    f'투자의견: {_op.text}</span><div class="note" style="margin-top:6px">'
+    + "<br>".join(f"· {r}" for r in _op.reasons if r)
+    + '</div></div>',
+    unsafe_allow_html=True,
+)
+st.caption("결합 규칙(사용자 지침 v3): CANSLIM이 1차 관문, Base 목표가 괴리율이 2차입니다. "
+           "매수 = 충족+괴리율>0 · 조건부 = 불합격 0(판단불가만)+괴리율>0 · "
+           "매도/비중 축소 = 불합격 3개 이상, M 불합격, C·L 동시 불합격, 또는 괴리율 ≤ −20%. "
+           "**이 의견은 기계적 규칙의 결과이며 매수·매도 신호가 아닙니다.**")
+
+# ─────────────────────────────────────────── 재무 건전성·주주환원
+
+st.markdown("### 재무 건전성·주주환원")
+_fin_bits = []
+_a_actual = [p for p in a.annual.actual_periods() if a.annual.value("EPS", p.key) is not None]
+if not usd:
+    _debt = a.annual.value("부채비율", _a_actual[-1].key) if _a_actual else None
+    _dps = a.annual.value("주당배당금", _a_actual[-1].key) if _a_actual else None
+    _fin_bits.append(f"부채비율 **{_debt:,.1f}%**" if _debt is not None else "부채비율 확인 불가")
+    if _dps is not None:
+        _fin_bits.append(f"주당배당금 **{_dps:,.0f}원**")
+    if snap.dividend_yield is not None:
+        _fin_bits.append(f"배당수익률 **{snap.dividend_yield:,.2f}%**")
+    _fin_bits.append("FCF·순차입금·총주주환원율은 무료 출처가 없어 확인 불가")
+else:
+    _fin_bits.append(f"부채비율(D/E) **{snap.debt_to_equity:,.1f}%**"
+                     if snap.debt_to_equity is not None else "부채비율 확인 불가")
+    if snap.fcf is not None:
+        _fin_bits.append(f"FCF(최근 연간) **${snap.fcf / 1e9:,.1f}B**")
+    if snap.dividend_yield is not None:
+        _fin_bits.append(f"배당수익률 **{snap.dividend_yield:,.2f}%**")
+st.markdown(" · ".join(_fin_bits))
+st.caption("대규모 자본지출·증자 계획 같은 정성 정보는 아래 '클로드 프로젝트에서 해석 이어가기'로 확인하세요.")
 
 # ─────────────────────────────────────────── 주요 제품·서비스 매출 구성
 
@@ -326,6 +457,19 @@ else:
                f"추정 매출액은 {_rev_base}이고, 내부거래 조정 때문에 '기타'가 음수이거나 "
                "비중 합계가 100%와 다를 수 있습니다. 제품별 이익률과 출시일은 "
                "회사가 공개하지 않아 제공하지 못합니다.")
+
+# ─────────────────────────── 클로드 프로젝트 인계 (해석은 구독으로, 비용 0원)
+
+st.markdown("### 🤖 클로드 프로젝트에서 해석 이어가기")
+st.caption("아래 요약을 복사해 **클로드 프로젝트**(지침 v3가 들어 있는)에 붙여넣으면, "
+           "앱이 계산한 수치를 그대로 받아 **피어 비교 · 프리미엄/디스카운트 · 핵심 가정 · "
+           "촉매 · 리스크** 해석을 이어서 받을 수 있습니다 (구독에 포함 — 추가 비용 없음).")
+_handoff_text = handoff.build_handoff(a)
+with st.expander("📋 앱 분석 요약 열기 (오른쪽 위 복사 버튼을 누르세요)"):
+    st.code(_handoff_text, language="markdown")
+    st.download_button("요약을 파일로 저장 (.md)", data=_handoff_text,
+                       file_name=f"{snap.name}_분석요약_{snap.price_date or '최신'}.md",
+                       mime="text/markdown")
 
 # ─────────────────────────────────────────────────────────── 차트
 
@@ -384,6 +528,22 @@ st.plotly_chart(
 
 # ─────────────────────────────────────────────────────────── 각주
 
+with st.expander(f"데이터 검증 — {a.verification.tally}"):
+    _check_rows = "".join(
+        f"<tr><td>{c.item}</td><td>{c.value}</td>"
+        f"<td class='dim'>{c.source}</td><td style='white-space:nowrap'>{c.grade_text}</td></tr>"
+        for c in a.verification.checks
+    )
+    st.markdown(
+        f'<div class="panel"><table class="grid">'
+        f'<tr><th>항목</th><th>값</th><th>출처</th><th>신뢰도</th></tr>{_check_rows}</table></div>',
+        unsafe_allow_html=True,
+    )
+    st.caption("🟢 확인 = 검산·교차검증 통과 · 🟡 단일 = 한 출처에서만 확인 · "
+               "🟠 추정 = 역산·근사 · ⚫ 불가 = 자료 없음. "
+               "이 앱은 시장당 출처가 하나(한국 네이버 금융 API, 미국 야후 yfinance)라 "
+               "대부분 '단일'이며, 시총 검산과 PER 교차검증을 통과한 항목만 '확인'입니다.")
+
 with st.expander("이 분석의 한계 — 반드시 읽어 주세요"):
     if usd:
         market_specific = f"""
@@ -422,6 +582,10 @@ with st.expander("이 분석의 한계 — 반드시 읽어 주세요"):
 - **`S`는 유통주식수(float)를 반영하지 못합니다.** 무료로 안정적으로 구할 수 없어 **상승일 거래량 ÷
   하락일 거래량(매집 비율)**과 최근 10일 평균 거래량 증가로 대체했고, 장중에는 부분 거래량 왜곡을
   피하려고 **직전 완결 거래일**까지만 씁니다.
+- **목표주가와 투자의견은 기계적 규칙의 결과입니다.** 밴드는 최근 3개 확정 연도의 고점·저점 ÷ 그 해
+  EPS이고, 이익이 급감했던 해가 밴드를 부풀릴 수 있습니다(경고가 뜨면 그 연도 제외 여부를 직접
+  판단하세요). 일회성 이익·업종 특성·경쟁 구도 같은 정성 요인은 반영하지 못하며, 그 몫은
+  '클로드 프로젝트에서 해석 이어가기'가 담당합니다.
 {market_specific}
 - 애널리스트 커버리지가 없는 소형주는 컨센서스가 아예 없는 것이 정상입니다.
 """

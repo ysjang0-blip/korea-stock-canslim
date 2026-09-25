@@ -70,8 +70,10 @@ def parse_sise(raw: str) -> pd.DataFrame:
     return df.sort_values("date").reset_index(drop=True)
 
 
-def load_ohlcv(symbol: str, days: int = 540, today: dt.date | None = None) -> pd.DataFrame:
+def load_ohlcv(symbol: str, days: int = 1460, today: dt.date | None = None) -> pd.DataFrame:
     """종목코드 또는 'KOSPI'/'KOSDAQ' 의 일봉을 days 일 치 가져온다.
+
+    기본 4년 치 — 밸류에이션 밴드(최근 3개 연도 고점·저점)까지 계산하기 위해서다.
 
     12개월 상대수익률 계산에 1년치 거래일이 필요하므로 기본 540일(약 1년 반)을 받는다.
     """

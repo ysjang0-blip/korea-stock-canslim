@@ -178,6 +178,10 @@ class Snapshot:
     currency: str = "KRW"               # 'KRW' 또는 'USD'
     source_name: str = "네이버"          # 교차검증 문구에 쓸 출처 이름
     inst_holding_pct: float | None = None  # 기관 보유 비중 % (미국 전용)
+    shares_outstanding: float | None = None  # 발행 주식 수 (보통주) — 시총 검산용
+    shares_pref: float | None = None         # 우선주 수 (한국 전용, 있으면 표기)
+    debt_to_equity: float | None = None      # 부채비율 % (미국은 야후 debtToEquity)
+    fcf: float | None = None                 # 최근 연간 잉여현금흐름 (미국 전용, 통화 원값)
 
     @property
     def change_pct(self) -> float | None:

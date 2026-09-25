@@ -110,6 +110,22 @@ def build_report(a) -> bytes:
         ["52주 최고 대비", ratio_52w],
     ])
 
+    # ── 요약 (지침 v3 Step 0) ────────────────────────────────────────
+    tg = getattr(a, "target", None)
+    op = getattr(a, "opinion", None)
+    ver = getattr(a, "verification", None)
+    doc.add_heading("요약", level=1)
+    target_text = (f"Bear {snap.money(tg.bear)} ({tg.bear_gap:+.1f}%) · "
+                   f"Base {snap.money(tg.base)} ({tg.base_gap:+.1f}%) · "
+                   f"Bull {snap.money(tg.bull)} ({tg.bull_gap:+.1f}%)"
+                   if tg and tg.ok else "산출 불가")
+    _add_table(doc, ["항목", "값"], [
+        ["CANSLIM", f"{a.canslim.summary} ({a.canslim.tally})"],
+        ["투자의견 (규칙 기반)", op.text + " — " + " / ".join(r for r in op.reasons if r) if op else "—"],
+        ["목표주가 12개월", target_text],
+        ["데이터 신뢰도", ver.tally if ver else "—"],
+    ])
+
     # ── CANSLIM ──────────────────────────────────────────────────────
     doc.add_heading("CANSLIM 판정", level=1)
     doc.add_paragraph(
@@ -148,6 +164,7 @@ def build_report(a) -> bytes:
         ["PSR"] + metric_cells("psr", "배"),
         ["PEG"] + metric_cells("peg", ""),
         ["ROE"] + metric_cells("roe", "%"),
+        ["PBR"] + ([f"{snap.pbr:,.2f}배"] if snap.pbr else ["—"]) + ["—"] * (len(val.columns) - 1),
         ["EPS (12개월)"] + metric_cells("eps_ttm", eps_unit, eps_digits),
         ["매출 (12개월)"] + metric_cells("revenue_ttm", rev_unit, rev_digits, rev_scale),
         ["산출 근거"] + [c.note for c in val.columns],
@@ -161,6 +178,66 @@ def build_report(a) -> bytes:
         f"{g.annual_cagr.text('%')}, 예상 열은 연간 컨센서스 성장률 {g.forward_annual.text('%')}.\n"
         f"최근 분기 EPS — 전년 동기 대비 {g.quarter_yoy.text('%')}"
     ).font.size = Pt(9)
+
+    # ── 목표주가와 투자의견 (지침 v3 Step 5·9·10) ────────────────────
+    doc.add_heading("목표주가와 투자의견", level=1)
+    band = getattr(a, "band", None)
+    if band and band.years and tg:
+        metric_reason = ("TTM 이익이 적자라 주당매출(PSR) 밴드로 대체"
+                         if band.metric == "PSR" else "TTM 이익이 흑자라 PER 밴드 사용")
+        doc.add_paragraph(f"평가지표: {band.metric} ({metric_reason}) · "
+                          f"기준 이익: {tg.basis.base_label or '—'}")
+        _add_table(doc, ["연도", "고점", "저점", f"{band.metric} 밴드"], [
+            [f"{y.year}년", snap.money(y.high), snap.money(y.low),
+             f"{y.lower:,.1f} ~ {y.upper:,.1f}배"] for y in band.years
+        ] + [["평균", "—", "—",
+              f"하단 {band.lower:,.1f} · 중간 {band.mid:,.1f} · 상단 {band.upper:,.1f}배"]])
+        _add_table(doc, ["시나리오", "산식", "목표가", "괴리율"], [
+            ["Bear", f"하단 {band.lower:,.1f}배 × {tg.basis.conservative_label or '—'}",
+             snap.money(tg.bear), f"{tg.bear_gap:+.1f}%" if tg.bear_gap is not None else "—"],
+            ["Base", f"중간 {band.mid:,.1f}배 × {tg.basis.base_label or '—'}",
+             snap.money(tg.base), f"{tg.base_gap:+.1f}%" if tg.base_gap is not None else "—"],
+            ["Bull", f"상단 {band.upper:,.1f}배 × {tg.basis.optimistic_label or '—'}",
+             snap.money(tg.bull), f"{tg.bull_gap:+.1f}%" if tg.bull_gap is not None else "—"],
+        ], font_pt=9)
+        _add_table(doc, ["민감도", "이익: 보수", "기준", "낙관"], [
+            [mlb] + [snap.money(v) if v is not None else "—" for v in row]
+            for mlb, row in zip(("멀티플 하단", "중간", "상단"), tg.sensitivity)
+        ], font_pt=9)
+    else:
+        doc.add_paragraph("목표주가 산출 불가 — " + " · ".join(band.notes if band else []))
+    for n in (band.notes if band else []):
+        doc.add_paragraph("주의: " + n, style="List Bullet")
+    if op:
+        p = doc.add_paragraph()
+        run = p.add_run(f"투자의견: {op.text} — " + " / ".join(r for r in op.reasons if r))
+        run.bold = True
+        doc.add_paragraph(
+            "결합 규칙(사용자 지침 v3): CANSLIM이 1차 관문, Base 목표가 괴리율이 2차. "
+            "이 의견은 기계적 규칙의 결과이며 매수·매도 신호가 아닙니다."
+        ).runs[0].font.size = Pt(9)
+
+    # ── 재무 건전성·주주환원 ──────────────────────────────────────────
+    doc.add_heading("재무 건전성·주주환원", level=1)
+    fin_bits = []
+    a_actual_y = [p for p in a.annual.actual_periods() if a.annual.value("EPS", p.key) is not None]
+    if not usd:
+        debt = a.annual.value("부채비율", a_actual_y[-1].key) if a_actual_y else None
+        dps = a.annual.value("주당배당금", a_actual_y[-1].key) if a_actual_y else None
+        fin_bits.append(f"부채비율 {debt:,.1f}%" if debt is not None else "부채비율 확인 불가")
+        if dps is not None:
+            fin_bits.append(f"주당배당금 {dps:,.0f}원")
+        if snap.dividend_yield is not None:
+            fin_bits.append(f"배당수익률 {snap.dividend_yield:,.2f}%")
+        fin_bits.append("FCF·순차입금·총주주환원율은 무료 출처가 없어 확인 불가")
+    else:
+        fin_bits.append(f"부채비율(D/E) {snap.debt_to_equity:,.1f}%"
+                        if snap.debt_to_equity is not None else "부채비율 확인 불가")
+        if snap.fcf is not None:
+            fin_bits.append(f"FCF(최근 연간) ${snap.fcf / 1e9:,.1f}B")
+        if snap.dividend_yield is not None:
+            fin_bits.append(f"배당수익률 {snap.dividend_yield:,.2f}%")
+    doc.add_paragraph(" · ".join(fin_bits))
 
     # ── 분기 실적 ─────────────────────────────────────────────────────
     doc.add_heading("분기 실적", level=1)
@@ -218,6 +295,17 @@ def build_report(a) -> bytes:
             "제품별 이익률과 출시일은 회사가 공개하지 않아 제공하지 못합니다."
         ).font.size = Pt(9)
 
+    # ── 데이터 검증 (지침 v3 Step 1) ─────────────────────────────────
+    if ver:
+        doc.add_heading(f"데이터 검증 — {ver.tally}", level=1)
+        _add_table(doc, ["항목", "값", "출처", "신뢰도"],
+                   [[c.item, c.value, c.source, c.grade] for c in ver.checks],
+                   widths_cm=[3.2, 7.6, 3.4, 1.8], font_pt=8)
+        doc.add_paragraph(
+            "확인 = 검산·교차검증 통과 / 단일 = 한 출처에서만 확인 / 추정 = 역산·근사 / 불가 = 자료 없음. "
+            "출처: 한국 네이버 금융 비공식 API, 미국 야후 파이낸스(yfinance)."
+        ).runs[0].font.size = Pt(8)
+
     # ── 한계와 면책 ───────────────────────────────────────────────────
     doc.add_heading("이 분석의 한계", level=1)
     limits = [
@@ -225,6 +313,8 @@ def build_report(a) -> bytes:
         "N(New)의 재료는 뉴스 제목을 키워드로 자동 분류한 것이라 사람의 판단을 대신할 수 없습니다.",
         "S는 유통주식수(float)를 반영하지 못해 상승일/하락일 거래량 비율과 최근 거래량 증가로 대체했습니다.",
         "M의 분산일은 지수 거래량으로 셉니다. 지수 거래량이 없으면 판단불가입니다.",
+        "목표주가·투자의견은 기계적 규칙(3개년 밴드 × 이익 기준, 사용자 지침 v3 결합 규칙)의 결과이며 "
+        "일회성 이익·업종 특성 같은 정성 요인을 반영하지 못합니다.",
     ]
     if usd:
         limits += [

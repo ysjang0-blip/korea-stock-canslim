@@ -27,6 +27,10 @@ _ROW_RE = re.compile(
 )
 _TABLE_RE = re.compile(r'<table id="cTB203".*?</table>', re.S)
 _PERIOD_RE = re.compile(r"매출구성\s*\(\s*(\d{4})\s*/\s*(\d{2})\s*\)")
+# 세부 기업개요 표: 발행주식수(보통/우선) → "5,846,278,608 주 / 802,371,203 주"
+_SHARES_RE = re.compile(
+    r"발행주식수[^<]*</th>\s*<td[^>]*>\s*([\d,]+)\s*주\s*/\s*([\d,]+)\s*주", re.S
+)
 
 
 @dataclass(frozen=True)
@@ -112,6 +116,24 @@ def describe_items(names: list[str], summary_text: str) -> dict[str, str]:
             if len(desc) >= 4:
                 result[name] = desc
     return result
+
+
+def parse_shares(page_html: str) -> tuple[float | None, float | None]:
+    """기업개요 페이지에서 발행주식수 (보통주, 우선주)를 뽑는다. 없으면 (None, None)."""
+    m = _SHARES_RE.search(page_html)
+    if not m:
+        return None, None
+    common = float(m.group(1).replace(",", ""))
+    pref = float(m.group(2).replace(",", ""))
+    return (common or None), (pref if pref > 0 else None)
+
+
+def shares(code: str) -> tuple[float | None, float | None]:
+    """발행주식수 (보통주, 우선주). 매출구성과 같은 페이지라 캐시를 함께 쓴다. 실패 시 (None, None)."""
+    try:
+        return parse_shares(naver.fetch_text(PAGE_URL.format(code=code), ttl=TTL))
+    except Exception:
+        return None, None
 
 
 def load(code: str, summary: str = "") -> SegmentBreakdown | None:

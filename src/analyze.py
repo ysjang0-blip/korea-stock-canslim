@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from . import canslim, eps_history, fundamentals, newness as newness_mod, prices, segments as segments_mod, tickers, valuation, yahoo
+from . import bands, canslim, eps_history, fundamentals, newness as newness_mod, prices, segments as segments_mod, tickers, valuation, verification as verification_mod, yahoo
 from .fundamentals import FinancialTable, Snapshot
 from .models import CanslimResult
 from .newness import Newness
@@ -38,6 +38,11 @@ class Analysis:
     index_name: str
     eps_history_note: str = ""   # 옛 분기 EPS 보강(야후 발표 이력) 결과 설명
     segments: segments_mod.SegmentBreakdown | None = None  # 사업부문별 매출 구성 (한국만, 없으면 None)
+    # 지침 v3 확장 — 검증 표(Step 1)·밸류 밴드(Step 5)·목표주가(Step 9)·투자의견(Step 10)
+    verification: verification_mod.Verification | None = None
+    band: bands.Band | None = None
+    target: bands.TargetPrice | None = None
+    opinion: bands.Opinion | None = None
 
 
 def run(query: str) -> Analysis:
@@ -61,6 +66,9 @@ def _run_kr(ref: StockRef) -> Analysis:
     index_df = prices.load_ohlcv(index_name)
 
     fresh = newness_mod.load(ref.code, researches=snap.researches)
+
+    # 발행주식수 — 시총 검산용. 매출구성과 같은 페이지라 추가 요청 비용이 없다
+    snap.shares_outstanding, snap.shares_pref = segments_mod.shares(ref.code)
 
     # 네이버는 확정 분기를 5개만 주므로 C2(2분기 연속) 판정용 옛 분기 EPS 를 야후 발표 이력으로 보강
     yahoo_symbol = f"{ref.code}{'.KQ' if index_name == 'KOSDAQ' else '.KS'}"
@@ -112,6 +120,19 @@ def _assemble(
         snap, quarterly, annual, val.growth, stock_done, index_done, index_name, newness=fresh
     )
 
+    # ── 지침 v3 확장: 밴드 → 목표주가 → 투자의견, 그리고 데이터 검증 표 ──
+    cur = val.columns[0] if val.columns else None
+    ttm_eps = cur.eps_ttm.value if (cur and cur.eps_ttm.is_ok) else snap.eps_naver
+    metric = "PSR" if (ttm_eps is not None and ttm_eps <= 0) else "PER"  # TTM 적자면 PER 금지
+    band = bands.yearly_band(stock_done, annual, metric=metric, shares=snap.shares_outstanding)
+    basis = bands.earnings_basis(metric, snap, val, annual)
+    target = bands.target_price(band, basis, snap.price)
+    opinion = bands.investment_opinion(cans, target)
+    ver = verification_mod.build(
+        snap, quarterly, annual, val, stock_done, index_done, index_name,
+        eps_supplemented=eps_history.EPS_REPORTED in quarterly.rows,
+    )
+
     return Analysis(
         ref=ref,
         snap=snap,
@@ -126,4 +147,8 @@ def _assemble(
         index_name=index_name,
         eps_history_note=eps_note,
         segments=segs,
+        verification=ver,
+        band=band,
+        target=target,
+        opinion=opinion,
     )

@@ -10,7 +10,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from src import analyze, charts, handoff, report, tickers
+from src import ai_local, analyze, charts, handoff, report, tickers
 from src.charts import C
 from src.models import Source, Verdict
 
@@ -182,10 +182,14 @@ if snap.consensus_date:
     _fresh_bits.append(f"컨센서스: {snap.consensus_date}")
 st.caption("🗓 기준일 — " + " · ".join(_fresh_bits))
 
+# AI 해석은 종목·가격 기준일·코드 버전별로 세션에 보관한다 (버튼을 눌렀을 때만 실행)
+_ai_key = f"ai:{a.ref.region}:{a.ref.code}:{snap.price_date}:{CODE_VERSION}"
+_ai_saved = st.session_state.get(_ai_key)
+
 # 화면과 같은 숫자를 글·표로 담은 Word 리포트 (차트 제외)
 st.download_button(
-    "📄 분석 리포트 다운로드 (Word)",
-    data=report.build_report(a),
+    "📄 분석 리포트 다운로드 (Word)" + (" · AI 해석 포함" if _ai_saved else ""),
+    data=report.build_report(a, ai_text=_ai_saved.text if _ai_saved else ""),
     file_name=f"{snap.name}_분석리포트_{snap.price_date or '최신'}.docx",
     mime=report.MIME,
 )
@@ -458,14 +462,43 @@ else:
                "비중 합계가 100%와 다를 수 있습니다. 제품별 이익률과 출시일은 "
                "회사가 공개하지 않아 제공하지 못합니다.")
 
-# ─────────────────────────── 클로드 프로젝트 인계 (해석은 구독으로, 비용 0원)
+# ─────────────────────────── AI 해석 (이 PC의 Claude Code = 구독, 추가 비용 0원)
 
-st.markdown("### 🤖 클로드 프로젝트에서 해석 이어가기")
-st.caption("아래 요약을 복사해 **클로드 프로젝트**(지침 v3가 들어 있는)에 붙여넣으면, "
-           "앱이 계산한 수치를 그대로 받아 **피어 비교 · 프리미엄/디스카운트 · 핵심 가정 · "
-           "촉매 · 리스크** 해석을 이어서 받을 수 있습니다 (구독에 포함 — 추가 비용 없음).")
 _handoff_text = handoff.build_handoff(a)
-with st.expander("📋 앱 분석 요약 열기 (오른쪽 위 복사 버튼을 누르세요)"):
+
+if ai_local.available():
+    st.markdown("### 🤖 AI 해석 (Claude)")
+    st.caption("앱이 계산한 수치를 이 PC의 Claude Code(클로드 구독)에 넘겨 **지표 선정 검토 · 피어 비교 · "
+               "프리미엄/디스카운트 · 목표주가 검토 · 핵심 가정·촉매·리스크**를 받습니다. "
+               "추가 요금은 없고 구독 사용량에서 차감되며, 1~3분 걸립니다 "
+               "(피어 수치는 Claude가 웹 검색으로 찾습니다). 실행 중에는 화면을 조작하지 마세요.")
+    _ai = st.session_state.get(_ai_key)
+    _run = st.button("🤖 AI 해석 다시 실행" if _ai else "🤖 AI 해석 실행",
+                     type="secondary" if _ai else "primary")
+    if _run:
+        with st.spinner("Claude가 해석하는 중… (1~3분, 웹 검색 포함)"):
+            try:
+                _ai = ai_local.interpret(_handoff_text)
+                st.session_state[_ai_key] = _ai
+                st.rerun()  # 맨 위 Word 리포트 버튼에도 해석을 담기 위해 한 번 더 그린다
+            except ai_local.AIError as exc:
+                st.error(str(exc))
+    if _ai:
+        with st.container(border=True):
+            st.markdown(_ai.text)
+        st.caption(f"Claude Code · {_ai.model or '구독 기본 모델'} · {_ai.seconds:.0f}초 · "
+                   "AI 해석은 앱의 기계적 계산을 검토·보완한 의견이며, 수치는 앱 요약과 Claude의 "
+                   "웹 검색 결과입니다. 매수·매도 신호가 아닙니다. Word 리포트에도 함께 담깁니다.")
+    _handoff_label = "📋 AI에 넘긴 앱 분석 요약 보기"
+else:
+    st.markdown("### 🤖 클로드 프로젝트에서 해석 이어가기")
+    st.caption("아래 요약을 복사해 **클로드 프로젝트**(지침 v3가 들어 있는)에 붙여넣으면, "
+               "앱이 계산한 수치를 그대로 받아 **피어 비교 · 프리미엄/디스카운트 · 핵심 가정 · "
+               "촉매 · 리스크** 해석을 이어서 받을 수 있습니다 (구독에 포함 — 추가 비용 없음). "
+               "앱을 이 PC에서 `run.bat` 으로 켜면 이 자리에서 버튼 하나로 해석을 받을 수 있습니다.")
+    _handoff_label = "📋 앱 분석 요약 열기 (오른쪽 위 복사 버튼을 누르세요)"
+
+with st.expander(_handoff_label):
     st.code(_handoff_text, language="markdown")
     st.download_button("요약을 파일로 저장 (.md)", data=_handoff_text,
                        file_name=f"{snap.name}_분석요약_{snap.price_date or '최신'}.md",

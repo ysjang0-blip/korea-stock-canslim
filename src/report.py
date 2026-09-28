@@ -38,7 +38,7 @@ def _korean_style(style, size: float | None = None) -> None:
 def _new_document() -> Document:
     doc = Document()
     _korean_style(doc.styles["Normal"], 10)
-    for name in ("Title", "Heading 1", "Heading 2", "List Bullet"):
+    for name in ("Title", "Heading 1", "Heading 2", "Heading 3", "List Bullet"):
         if name in doc.styles:
             _korean_style(doc.styles[name])
     return doc
@@ -71,8 +71,58 @@ def _add_table(doc: Document, headers: list[str], rows: list[list[str]],
     return table
 
 
-def build_report(a) -> bytes:
-    """Analysis 객체 하나를 받아 완성된 .docx 바이트를 돌려준다."""
+def _add_rich(paragraph, text: str, size: float | None = None) -> None:
+    """'**굵게**' 표시만 살려 문단에 글을 넣는다."""
+    for i, chunk in enumerate(text.split("**")):
+        if not chunk:
+            continue
+        run = paragraph.add_run(chunk)
+        run.bold = i % 2 == 1
+        if size:
+            run.font.size = Pt(size)
+
+
+def _table_cells(line: str) -> list[str]:
+    return [c.strip().replace("**", "") for c in line.strip().strip("|").split("|")]
+
+
+def add_markdown(doc: Document, markdown: str) -> None:
+    """AI 해석 마크다운을 Word로. 제목(##/###)·목록(-)·표(|)·굵게(**)만 다루는 간단 변환."""
+    lines = markdown.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i].rstrip()
+        stripped = line.strip()
+        if stripped.startswith("|"):
+            block = []
+            while i < len(lines) and lines[i].strip().startswith("|"):
+                block.append(lines[i])
+                i += 1
+            rows = [_table_cells(b) for b in block
+                    if not set(b.strip().replace("|", "").replace(":", "").replace(" ", "")) <= {"-"}]
+            if rows:
+                width = max(len(r) for r in rows)
+                rows = [r + [""] * (width - len(r)) for r in rows]
+                _add_table(doc, rows[0], rows[1:], font_pt=8)
+            continue
+        if stripped.startswith("### "):
+            doc.add_heading(stripped[4:].replace("**", ""), level=3)
+        elif stripped.startswith("## "):
+            doc.add_heading(stripped[3:].replace("**", ""), level=2)
+        elif stripped.startswith(("- ", "* ")):
+            _add_rich(doc.add_paragraph(style="List Bullet"), stripped[2:], size=9.5)
+        elif stripped and set(stripped) <= {"-", "—", "_"}:
+            pass  # 구분선
+        elif stripped:
+            _add_rich(doc.add_paragraph(), stripped, size=9.5)
+        i += 1
+
+
+def build_report(a, ai_text: str = "") -> bytes:
+    """Analysis 객체 하나를 받아 완성된 .docx 바이트를 돌려준다.
+
+    ai_text 를 주면 (이 PC의 Claude Code 해석) 'AI 해석' 절로 함께 담는다.
+    """
     snap, val = a.snap, a.valuation
     usd = snap.currency == "USD"
     doc = _new_document()
@@ -294,6 +344,15 @@ def build_report(a) -> bytes:
             "내부거래 조정 때문에 '기타'가 음수이거나 비중 합계가 100%와 다를 수 있습니다. "
             "제품별 이익률과 출시일은 회사가 공개하지 않아 제공하지 못합니다."
         ).font.size = Pt(9)
+
+    # ── AI 해석 (이 PC의 Claude Code — 있을 때만) ────────────────────
+    if ai_text.strip():
+        doc.add_heading("AI 해석 (Claude)", level=1)
+        doc.add_paragraph(
+            "앱의 계산 결과를 Claude가 검토·보완한 의견입니다. 수치는 앱 요약과 Claude의 웹 검색 결과이며 "
+            "매수·매도 신호가 아닙니다."
+        ).runs[0].font.size = Pt(8)
+        add_markdown(doc, ai_text)
 
     # ── 데이터 검증 (지침 v3 Step 1) ─────────────────────────────────
     if ver:

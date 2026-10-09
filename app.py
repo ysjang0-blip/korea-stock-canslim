@@ -9,13 +9,33 @@
 from __future__ import annotations
 
 import hashlib
+import sys
 from pathlib import Path
 
 import streamlit as st
 
-from src import ai_local, analyze, brief, charts, handoff, recent, report, tickers
-from src.charts import C
-from src.models import Source, Verdict
+
+def _code_version() -> str:
+    """src/*.py 내용의 지문. 코드가 바뀌었는지 판단하는 데 쓴다."""
+    digest = hashlib.md5()
+    for path in sorted(Path(__file__).parent.glob("src/*.py")):
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+CODE_VERSION = _code_version()
+
+# 배포로 src/*.py 가 바뀌어도 Streamlit 은 app.py 만 다시 읽고, 이미 불러온 src 모듈은 옛 버전을
+# 계속 쓴다 (새 app.py 가 옛 모듈에 없는 함수를 부르다 AttributeError). 지문이 바뀌면 src 모듈을
+# 메모리에서 지워, 아래 import 가 새 파일을 읽게 한다.
+if getattr(sys, "_stock_app_src_version", None) != CODE_VERSION:
+    for _name in [n for n in sys.modules if n == "src" or n.startswith("src.")]:
+        del sys.modules[_name]
+    sys._stock_app_src_version = CODE_VERSION
+
+from src import ai_local, analyze, brief, charts, handoff, recent, report, tickers  # noqa: E402
+from src.charts import C  # noqa: E402
+from src.models import Source, Verdict  # noqa: E402
 
 st.set_page_config(page_title="종목 분석 · CANSLIM + 밸류에이션",
                    page_icon="📈", layout="wide")
@@ -89,18 +109,7 @@ def tag(text: str, color: str) -> str:
     return f'<span class="tag" style="color:{color};border-color:{color}">{text}</span>'
 
 
-def _code_version() -> str:
-    """src/*.py 내용의 지문. 캐시 키에 넣어, 코드가 바뀌면 옛 분석 결과(다른 모양의 객체)를
-    다시 쓰지 않게 한다 — 배포 직후 옛 캐시를 새 코드로 읽다가 AttributeError 가 나는 것을 막는다."""
-    digest = hashlib.md5()
-    for path in sorted(Path(__file__).parent.glob("src/*.py")):
-        digest.update(path.read_bytes())
-    return digest.hexdigest()
-
-
-CODE_VERSION = _code_version()
-
-
+# CODE_VERSION 을 캐시 키에도 넣어, 코드가 바뀌면 옛 분석 결과(다른 모양의 객체)를 다시 쓰지 않는다
 @st.cache_data(ttl=600, show_spinner=False)
 def load(code: str, name: str, market: str, region: str, version: str):
     return analyze.run_for(tickers.StockRef(code=code, name=name, market=market, region=region))

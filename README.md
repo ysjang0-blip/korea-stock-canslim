@@ -25,6 +25,24 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
+## 전 종목 스크리너 (웹앱과 별도)
+
+코스피·코스닥 보통주 약 2,600개를 훑어 **C·A(실적) 조건을 먼저 만족하는 기업**을 엑셀로 뽑습니다.
+**`screen.bat` 을 더블클릭**하면 끝난 뒤 `screens/CANSLIM_스크리닝_날짜.xlsx` 가 자동으로 열립니다.
+
+1. **1차 — C·A 실적 필터 (전 종목)**: 웹앱과 같은 기준으로 C1·C3·C4·A1·A2·A3을 봅니다.
+   C2는 네이버 재무표만으로 판단할 수 없어 1차에서는 막지 않습니다.
+2. **2차 — 정밀 CANSLIM (1차 통과 종목만)**: 웹앱과 똑같이 7개 항목 전부와 규칙 기반 투자의견·목표가를 계산합니다.
+
+엑셀 시트: **요약 · CANSLIM 충족 · C·A 통과 · C·A 근접**(조건 1개만 모자라거나 자료가 없어 판단불가).
+첫 실행은 30분~1시간 걸리고, 같은 날 다시 돌리면 저장된 자료(24시간)를 써서 훨씬 빠릅니다.
+중간에 `Ctrl+C`로 멈추면 그때까지의 결과로 저장합니다.
+
+```powershell
+.\.venv\Scripts\python.exe screen.py --market KOSDAQ --min-cap 1000   # 코스닥, 시총 1,000억 이상만
+.\.venv\Scripts\python.exe screen.py --limit 50 --no-deep             # 시총 상위 50개, 1차만 (시험용)
+```
+
 ## 화면 읽는 법
 
 ### 화면 순서
@@ -148,9 +166,12 @@ src/handoff.py      앱 분석 요약 — AI 해석의 입력 (클로드 프로�
 src/ai_local.py     AI 해석 — 이 PC의 Claude Code(구독)를 비대화 모드로 호출, 결과 저장
 src/brief.py        1분 브리핑 계산 (화면·리포트 공용)
 src/recent.py       최근 종목 목록 — 쿠키 인코딩
+src/screener.py     전 종목 스크리너 — 1차 C·A 필터, 2차 정밀 CANSLIM
+src/screen_excel.py 스크리너 결과 엑셀 (요약·충족·통과·근접)
+screen.py           스크리너 실행 파일 (screen.bat 이 부른다)
 src/newness.py      N 판정용 '새로운 재료' 추출 (한/영 키워드 분류 + 중복 기사 병합)
 src/charts.py       차트 (검증된 팔레트 사용)
-tests/              351개 테스트 — 네트워크 없이 실행됨 (Claude 호출도 흉내만 냄)
+tests/              367개 테스트 — 네트워크 없이 실행됨 (Claude 호출도 흉내만 냄)
 ```
 
 테스트: `.\.venv\Scripts\python.exe -m pytest tests/ -q`

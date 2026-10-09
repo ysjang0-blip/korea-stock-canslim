@@ -153,6 +153,15 @@ def news(code: str, size: int = 30, ttl: int = 6 * 60 * 60) -> list:
     return articles
 
 
+def market_list(market: str, page: int, size: int = 100, ttl: int = 6 * 60 * 60) -> dict:
+    """시가총액 순 전 종목 목록 한 페이지. market 은 'KOSPI' 또는 'KOSDAQ' (ETF·ETN 포함되어 온다)."""
+    if market not in ("KOSPI", "KOSDAQ"):
+        raise ValueError("market 은 'KOSPI' 또는 'KOSDAQ' 이어야 합니다")
+    return fetch_json(
+        f"https://m.stock.naver.com/api/stocks/marketValue/{market}?page={page}&pageSize={size}", ttl=ttl
+    )
+
+
 def autocomplete(query: str, ttl: int = 7 * DEFAULT_TTL) -> dict:
     """종목명 자동완성 검색."""
     return fetch_json(

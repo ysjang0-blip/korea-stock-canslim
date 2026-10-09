@@ -13,6 +13,10 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
+import re
+import time
+from pathlib import Path
 
 import pandas as pd
 
@@ -257,6 +261,53 @@ def build_snapshot(
             if price and _num(info.get("dividendRate")) is not None else None
         ),
     )
+
+
+FIN_CACHE_DIR = Path(__file__).resolve().parent.parent / ".cache" / "yahoo_fin"
+FIN_CACHE_TTL = 24 * 60 * 60
+
+
+def _table_to_dict(t: FinancialTable) -> dict:
+    return {"periods": [[p.key, p.title, p.is_consensus] for p in t.periods],
+            "rows": t.rows, "money_unit": t.money_unit}
+
+
+def _table_from_dict(d: dict) -> FinancialTable:
+    return FinancialTable(periods=[Period(key=k, title=title, is_consensus=c) for k, title, c in d["periods"]],
+                          rows=d["rows"], money_unit=d["money_unit"])
+
+
+def load_financials(symbol: str, cache_dir: Path | None = None) -> tuple[FinancialTable, FinancialTable]:
+    """스크리너 1차용 — 분기·연간 손익과 분기 자기자본(ROE)만. 시세·뉴스·추정치는 받지 않는다.
+
+    전 종목을 훑을 때 같은 날 다시 돌리거나 중단 후 이어서 돌리면 야후를 다시 부르지 않도록
+    24시간 디스크에 저장한다.
+    """
+    import yfinance as yf
+
+    folder = cache_dir or FIN_CACHE_DIR
+    path = folder / f"{re.sub(r'[^A-Za-z0-9_.-]', '_', symbol)}.json"
+    try:
+        if time.time() - path.stat().st_mtime < FIN_CACHE_TTL:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return _table_from_dict(data["q"]), _table_from_dict(data["a"])
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+
+    try:
+        t = yf.Ticker(symbol)
+        quarterly = normalize_quarterly(t.quarterly_income_stmt, t.quarterly_balance_sheet)
+        annual = normalize_annual(t.income_stmt)
+    except Exception as exc:
+        raise YahooFetchError(f"야후 재무 조회 실패 ({symbol}): {exc}") from exc
+
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"q": _table_to_dict(quarterly), "a": _table_to_dict(annual)}),
+                        encoding="utf-8")
+    except OSError:
+        pass  # 저장 실패는 조회 실패가 아니다
+    return quarterly, annual
 
 
 def load_all(symbol: str) -> tuple[Snapshot, FinancialTable, FinancialTable, list[dict], pd.DataFrame]:

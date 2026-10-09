@@ -6,23 +6,36 @@
       여기선 판단불가가 정상이므로 통과를 막지 않는다.
   2차 (1차 통과 종목만): 웹앱과 같은 analyze.run_for 로 7개 항목 전부와 투자의견을 본다
       (C2 는 야후 실적 발표 이력으로 보강된다).
+
+미국(US): 대상 목록은 나스닥 스크리너(미국 상장 전 종목, 시가총액 포함), 1차 재무는 야후.
+미국은 웹앱처럼 I(기관 수급)가 늘 판단불가라 '7개 전부 합격'이 원리상 나오지 않으므로,
+I만 판단불가이고 나머지 6개가 합격이면 '조건부 충족'으로 따로 표시한다.
 """
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Callable
 
-from . import analyze, canslim, fundamentals, naver
+import requests
+
+from . import analyze, canslim, fundamentals, naver, yahoo
 from .fundamentals import Snapshot
 from .models import CanslimItem, SubCheck
 from .tickers import StockRef
 from .valuation import EPS, REVENUE, compute_growth, yoy
 
 MARKETS = ("KOSPI", "KOSDAQ")
-MARKET_KR = {"KOSPI": "코스피", "KOSDAQ": "코스닥"}
+MARKET_KR = {"KOSPI": "코스피", "KOSDAQ": "코스닥", "US": "미국"}
 PAGE_SIZE = 100
+EOK = 1e8
+NASDAQ_SCREENER_URL = "https://api.nasdaq.com/api/screener/stocks?tableonly=true&download=true"
+US_INTERVAL = 0.3   # 야후 연속 요청 사이 쉬는 시간(초) — 한꺼번에 몰아 막히지 않게
+# 미국 목록에서 보통주가 아닌 것 (우선주·워런트·유닛·권리·채권)
+US_NAME_EXCLUDE = re.compile(r"preferred|warrant|\bunits?\b|\brights?\b|\bnotes?\b|debenture", re.I)
+US_SYMBOL = re.compile(r"^[A-Z]{1,5}(-[A-Z])?$")
 C2_CODE = "C2"   # 1차에서는 판단불가를 허용하는 조건
 
 PASS, NEAR, FAIL, ERROR = "통과", "근접", "탈락", "오류"
@@ -34,12 +47,20 @@ PASS, NEAR, FAIL, ERROR = "통과", "근접", "탈락", "오류"
 class UniverseItem:
     code: str
     name: str
-    market: str            # 'KOSPI' / 'KOSDAQ'
-    cap_eok: float | None  # 시가총액 (억원)
+    market: str            # 'KOSPI' / 'KOSDAQ' / 'US'
+    cap: float | None      # 시가총액 (현지 통화 원값 — 원 또는 달러)
+
+    @property
+    def region(self) -> str:
+        return "US" if self.market == "US" else "KR"
+
+    @property
+    def currency(self) -> str:
+        return "USD" if self.region == "US" else "KRW"
 
     @property
     def ref(self) -> StockRef:
-        return StockRef(code=self.code, name=self.name, market=MARKET_KR[self.market], region="KR")
+        return StockRef(code=self.code, name=self.name, market=MARKET_KR[self.market], region=self.region)
 
 
 def _to_float(text) -> float | None:
@@ -68,13 +89,52 @@ def parse_universe(payload: dict, market: str) -> list[UniverseItem]:
         code, name = str(s.get("itemCode", "")), str(s.get("stockName", ""))
         if is_excluded(code, name):
             continue
-        out.append(UniverseItem(code, name, market, _to_float(s.get("marketValue"))))
+        cap = _to_float(s.get("marketValue"))   # 억원
+        out.append(UniverseItem(code, name, market, cap * EOK if cap is not None else None))
     return out
+
+
+_ADR = re.compile(r"\s*American Depositary Shares?.*$", re.I)
+_SHARE_SUFFIX = re.compile(r"\s+(Common Stock|Common Shares|Ordinary Shares|Class [A-Z] Ordinary Shares)\s*$", re.I)
+
+
+def clean_us_name(name: str) -> str:
+    """'Apple Inc. Common Stock' → 'Apple Inc.', 'Taiwan Semi… American Depositary Shares' → '… (ADR)'."""
+    if _ADR.search(name):
+        return _ADR.sub("", name).strip() + " (ADR)"
+    return _SHARE_SUFFIX.sub("", name).strip()
+
+
+def parse_universe_us(payload: dict) -> list[UniverseItem]:
+    """나스닥 스크리너 응답 → 보통주(ADR 포함). 'BRK/B' 같은 클래스 주식은 야후 표기 'BRK-B' 로."""
+    rows = (((payload or {}).get("data") or {}).get("rows")) or []
+    out: list[UniverseItem] = []
+    for r in rows:
+        symbol = str(r.get("symbol", "")).strip().replace("/", "-")
+        name = re.sub(r"\s+", " ", str(r.get("name", ""))).strip()
+        if not US_SYMBOL.match(symbol) or US_NAME_EXCLUDE.search(name):
+            continue
+        cap = _to_float(r.get("marketCap"))
+        if not cap:
+            continue
+        out.append(UniverseItem(symbol, clean_us_name(name), "US", cap))
+    out.sort(key=lambda i: i.cap or 0, reverse=True)
+    return out
+
+
+def fetch_universe_us() -> list[UniverseItem]:
+    resp = requests.get(NASDAQ_SCREENER_URL, timeout=60, headers={
+        "User-Agent": naver.HEADERS["User-Agent"], "Accept": "application/json"})
+    resp.raise_for_status()
+    return parse_universe_us(resp.json())
 
 
 def fetch_universe(markets: tuple[str, ...] = MARKETS) -> list[UniverseItem]:
     items: list[UniverseItem] = []
     for market in markets:
+        if market == "US":
+            items.extend(fetch_universe_us())
+            continue
         page = 1
         while True:
             payload = naver.market_list(market, page, PAGE_SIZE)
@@ -122,18 +182,22 @@ def latest_roe(quarterly) -> float | None:
     )
 
 
-def ca_items(quarterly, annual, name: str = "", code: str = "") -> tuple[CanslimItem, CanslimItem, float | None]:
+def ca_items(quarterly, annual, name: str = "", code: str = "",
+             currency: str = "KRW") -> tuple[CanslimItem, CanslimItem, float | None]:
     growth = compute_growth(quarterly, annual)
-    snap = Snapshot(code=code, name=name, market_cap=None, price=None)  # 금액 표시용
+    snap = Snapshot(code=code, name=name, market_cap=None, price=None, currency=currency)  # 금액 표시용
     roe = latest_roe(quarterly)
     return canslim._item_c(quarterly, growth, snap), canslim._item_a(growth, annual, roe, snap), roe
 
 
 def screen_ca(item: UniverseItem) -> CaResult:
     try:
-        quarterly = fundamentals.parse_finance(naver.finance(item.code, "quarter"))
-        annual = fundamentals.parse_finance(naver.finance(item.code, "annual"))
-        c, a, roe = ca_items(quarterly, annual, item.name, item.code)
+        if item.region == "US":
+            quarterly, annual = yahoo.load_financials(item.code)
+        else:
+            quarterly = fundamentals.parse_finance(naver.finance(item.code, "quarter"))
+            annual = fundamentals.parse_finance(naver.finance(item.code, "annual"))
+        c, a, roe = ca_items(quarterly, annual, item.name, item.code, item.currency)
     except Exception as exc:  # 비공식 API — 한 종목 실패가 전체를 멈추면 안 된다
         return CaResult(item, ERROR, error=str(exc)[:200])
 
@@ -165,11 +229,20 @@ class DeepResult:
     summary: str = ""                       # 'CANSLIM 충족' / '미충족' / '미충족 (자료 부족)'
     tally: str = ""
     qualified: bool = False
+    # I(기관 수급)만 판단불가이고 나머지 6개 합격 — 미국은 I를 판정할 자료가 없어 이것이 사실상 최고 등급
+    qualified_ex_i: bool = False
     verdicts: dict[str, str] = field(default_factory=dict)   # {'C': '합격', ...}
     opinion: str = ""
     base_gap: float | None = None
     price: float | None = None
     error: str = ""
+
+
+def _qualified_ex_i(cans) -> bool:
+    others = [i.verdict for i in cans.items if i.letter != "I"]
+    i_item = next((i for i in cans.items if i.letter == "I"), None)
+    return (bool(others) and all(v.value == "합격" for v in others)
+            and i_item is not None and i_item.verdict.value == "판단불가")
 
 
 def deep_check(item: UniverseItem) -> DeepResult:
@@ -182,6 +255,7 @@ def deep_check(item: UniverseItem) -> DeepResult:
         summary=a.canslim.summary,
         tally=a.canslim.tally,
         qualified=a.canslim.qualified,
+        qualified_ex_i=_qualified_ex_i(a.canslim),
         verdicts={i.letter: i.verdict.value for i in a.canslim.items},
         opinion=a.opinion.text if a.opinion else "",
         base_gap=a.target.base_gap if a.target else None,
@@ -214,7 +288,7 @@ def _eta(done: int, total: int, started: float) -> str:
 def run(
     markets: tuple[str, ...] = MARKETS,
     limit: int | None = None,
-    min_cap: float = 0.0,
+    min_cap: float = 0.0,          # 현지 통화 원값 (원 또는 달러)
     deep: bool = True,
     progress: Callable[[str], None] = print,
     universe: list[UniverseItem] | None = None,
@@ -223,7 +297,7 @@ def run(
     try:
         progress("대상 종목 목록을 받는 중…")
         items = universe if universe is not None else fetch_universe(markets)
-        items = [i for i in items if (i.cap_eok or 0) >= min_cap]
+        items = [i for i in items if (i.cap or 0) >= min_cap]
         if limit:
             items = items[:limit]
         result.universe = len(items)
@@ -232,6 +306,8 @@ def run(
         t0 = time.time()
         for n, item in enumerate(items, start=1):
             result.ca.append(screen_ca(item))
+            if item.region == "US":
+                time.sleep(US_INTERVAL)
             if n % 50 == 0 or n == len(items):
                 progress(f"  1차 {n:,}/{len(items):,} · 통과 {len(result.by_status(PASS))} · "
                          f"근접 {len(result.by_status(NEAR))} · 남은 시간 약 {_eta(n, len(items), t0)}")

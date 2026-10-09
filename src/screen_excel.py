@@ -27,14 +27,22 @@ def _pct(v: float | None):
     return round(v, 1) if v is not None else None
 
 
+CAP_UNIT = {"KRW": ("시가총액(억원)", 1e8), "USD": ("시가총액(백만$)", 1e6)}
+
+
 def _base_cols(r: CaResult) -> list:
     i = r.item
-    return [i.market, i.name, i.code, round(i.cap_eok) if i.cap_eok else None, r.latest_quarter,
+    scale = CAP_UNIT[i.currency][1]
+    return [i.market, i.name, i.code, round(i.cap / scale) if i.cap else None, r.latest_quarter,
             _pct(r.eps_yoy), _pct(r.revenue_yoy), _pct(r.annual_cagr), _pct(r.roe)]
 
 
-BASE_HEAD = ["시장", "종목명", "코드", "시가총액(억원)", "최근 분기",
-             "C1 분기 EPS 전년비", "C4 분기 매출 전년비", "A1 연간 EPS 성장률", "A3 ROE"]
+def base_head(currency: str) -> list[str]:
+    return ["시장", "종목명", "코드", CAP_UNIT[currency][0], "최근 분기",
+            "C1 분기 EPS 전년비", "C4 분기 매출 전년비", "A1 연간 EPS 성장률", "A3 ROE"]
+
+
+BASE_HEAD = base_head("KRW")
 PCT_COLS = {6, 7, 8, 9}   # 1부터 센 열 번호 (BASE_HEAD 기준)
 
 
@@ -72,13 +80,13 @@ def _sheet(wb: Workbook, title: str, head: list[str], rows: list[list], widths: 
                 cell.alignment = Alignment(horizontal="center")
             if head[idx - 1] == "세부 조건":
                 cell.alignment = Alignment(wrap_text=True, vertical="top")
-            if head[idx - 1] == "시가총액(억원)":
+            if head[idx - 1].startswith("시가총액"):
                 cell.number_format = "#,##0"
     ws.row_dimensions[1].height = 32
     return ws
 
 
-WIDTHS = {"종목명": 16, "코드": 8, "시장": 8, "시가총액(억원)": 13, "최근 분기": 9,
+WIDTHS = {"종목명": 22, "코드": 8, "시장": 8, "시가총액(억원)": 13, "시가총액(백만$)": 13, "최근 분기": 9,
           "2차 종합": 18, "합격·불합격·판단불가": 22, "투자의견(규칙)": 16,
           "세부 조건": 70, "모자란 조건": 16, **{L: 6 for L in LETTERS}}
 
@@ -87,7 +95,9 @@ def _sort_key(r: CaResult):
     return -(r.eps_yoy if r.eps_yoy is not None else -1e9)
 
 
-def write_excel(result: ScreenResult, path: Path) -> Path:
+def write_excel(result: ScreenResult, path: Path, currency: str = "KRW") -> Path:
+    """currency='USD' 면 미국 결과 — 시가총액 단위와 '조건부 충족(I 제외)' 기준이 달라진다."""
+    us = currency == "USD"
     path.parent.mkdir(parents=True, exist_ok=True)
     wb = Workbook()
     ws = wb.active
@@ -99,15 +109,19 @@ def write_excel(result: ScreenResult, path: Path) -> Path:
     verdict_cols = set(range(deep_head_start + 2, deep_head_start + 2 + len(LETTERS)))
     pct_all = PCT_COLS | {deep_head_start + 2 + len(LETTERS) + 1}
 
-    qualified = [r for r in passed if result.deep.get(r.item.code) and result.deep[r.item.code].qualified]
-    head = BASE_HEAD + DEEP_HEAD + ["세부 조건"]
+    def is_qualified(r: CaResult) -> bool:
+        d = result.deep.get(r.item.code)
+        return bool(d) and (d.qualified or (us and d.qualified_ex_i))
+
+    qualified = [r for r in passed if is_qualified(r)]
+    head = base_head(currency) + DEEP_HEAD + ["세부 조건"]
 
     def full_row(r: CaResult) -> list:
         return _base_cols(r) + _deep_cols(result.deep.get(r.item.code)) + [r.detail]
 
     _sheet(wb, "CANSLIM 충족", head, [full_row(r) for r in qualified], WIDTHS, pct_all, verdict_cols)
     _sheet(wb, "C·A 통과", head, [full_row(r) for r in passed], WIDTHS, pct_all, verdict_cols)
-    _sheet(wb, "C·A 근접", BASE_HEAD + ["모자란 조건", "세부 조건"],
+    _sheet(wb, "C·A 근접", base_head(currency) + ["모자란 조건", "세부 조건"],
            [_base_cols(r) + [", ".join([f"{c} 불합격" for c in r.failed] + [f"{c} 판단불가" for c in r.unknown]),
                              r.detail] for r in near],
            WIDTHS, PCT_COLS, set())
@@ -117,12 +131,14 @@ def write_excel(result: ScreenResult, path: Path) -> Path:
     summary = [
         ("실행 시각", f"{started:%Y-%m-%d %H:%M} (소요 {minutes:.0f}분)"
          + (" — 중간에 중단됨, 일부 결과" if result.interrupted else "")),
-        ("대상 종목", f"{result.universe:,}개 (코스피·코스닥 보통주 — ETF·ETN·우선주·스팩 제외)"),
+        ("대상 종목", f"{result.universe:,}개 (미국 상장 보통주·ADR — 나스닥 스크리너 목록, 우선주·워런트 제외)"
+                     if us else f"{result.universe:,}개 (코스피·코스닥 보통주 — ETF·ETN·우선주·스팩 제외)"),
         ("1차 C·A 통과", f"{len(passed):,}개"),
         ("1차 C·A 근접", f"{len(near):,}개 (조건 1개 불합격, 또는 자료가 없어 판단불가)"),
         ("1차 탈락", f"{len(result.by_status(FAIL)):,}개"),
         ("자료 오류", f"{len(result.by_status(ERROR)):,}개"),
-        ("2차 CANSLIM 충족", f"{len(qualified):,}개 (7개 항목 전부 합격)"),
+        ("2차 CANSLIM 충족", f"{len(qualified):,}개 (I 기관 수급을 뺀 6개 항목 합격 — 미국은 I를 판정할 자료가 없음)"
+                            if us else f"{len(qualified):,}개 (7개 항목 전부 합격)"),
         ("", ""),
         ("1차 기준 (웹앱과 같음)",
          f"C1 최근 분기 EPS 전년비 +{canslim.C_EPS_YOY_MIN:.0f}% 이상 · C3 직전 분기보다 EPS 증가 · "

@@ -38,7 +38,13 @@ python -m venv .venv
 첫 실행은 30분~1시간 걸리고, 같은 날 다시 돌리면 저장된 자료(24시간)를 써서 훨씬 빠릅니다.
 중간에 `Ctrl+C`로 멈추면 그때까지의 결과로 저장합니다.
 
+**미국 주식은 `screen_us.bat`** — 나스닥이 제공하는 미국 상장 전 종목 목록에서 시가총액 20억 달러 이상
+(약 1,500개, 우선주·워런트 제외, ADR 포함)을 야후 재무로 같은 방식으로 거릅니다. 결과는
+`CANSLIM_스크리닝_US_날짜.xlsx`. 미국은 웹앱처럼 I(기관 수급)를 판정할 자료가 없어,
+**I만 판단불가이고 나머지 6개가 합격이면 'CANSLIM 충족' 시트에 넣습니다**(조건부 충족).
+
 ```powershell
+.\.venv\Scripts\python.exe screen.py --market US --min-cap 100        # 미국, 시총 100억 달러 이상
 .\.venv\Scripts\python.exe screen.py --market KOSDAQ --min-cap 1000   # 코스닥, 시총 1,000억 이상만
 .\.venv\Scripts\python.exe screen.py --limit 50 --no-deep             # 시총 상위 50개, 1차만 (시험용)
 ```
@@ -171,7 +177,7 @@ src/screen_excel.py 스크리너 결과 엑셀 (요약·충족·통과·근접)
 screen.py           스크리너 실행 파일 (screen.bat 이 부른다)
 src/newness.py      N 판정용 '새로운 재료' 추출 (한/영 키워드 분류 + 중복 기사 병합)
 src/charts.py       차트 (검증된 팔레트 사용)
-tests/              367개 테스트 — 네트워크 없이 실행됨 (Claude 호출도 흉내만 냄)
+tests/              375개 테스트 — 네트워크 없이 실행됨 (Claude 호출도 흉내만 냄)
 ```
 
 테스트: `.\.venv\Scripts\python.exe -m pytest tests/ -q`

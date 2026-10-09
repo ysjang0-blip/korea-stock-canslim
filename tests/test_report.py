@@ -8,7 +8,9 @@ from docx import Document
 
 from src import report, valuation
 from src.models import CanslimItem, CanslimResult, Verdict
+from src.newness import Newness
 from src.tickers import StockRef
+from tests.conftest import make_ohlcv
 
 
 @pytest.fixture
@@ -26,6 +28,8 @@ def analysis(snapshot, quarterly, annual):
         ref=StockRef(code="005930", name="삼성전자", market="KOSPI", region="KR"),
         snap=snapshot, quarterly=quarterly, annual=annual,
         valuation=val, canslim=canslim,
+        newness=Newness(), stock_df=make_ohlcv([100.0] * 300), index_df=make_ohlcv([100.0] * 300),
+        index_name="KOSPI",
     )
 
 
@@ -71,3 +75,28 @@ class Test리포트:
         doc = Document(BytesIO(report.build_report(analysis)))
         rpr = doc.styles["Normal"].element.rPr
         assert rpr.rFonts.get(report.qn("w:eastAsia")) == report.MALGUN
+
+
+class Test리포트순서:
+    """화면과 같은 흐름: 1분 브리핑 → 상세 → 목표주가 → 밸류에이션 → CANSLIM."""
+
+    def test_큰_제목_순서(self, analysis):
+        doc = Document(BytesIO(report.build_report(analysis)))
+        h1 = [p.text for p in doc.paragraphs if p.style.name == "Heading 1"]
+        order = ["① 1분 브리핑", "② 상세 — 실적 · 재무", "③ 목표주가와 투자의견",
+                 "④ 밸류에이션", "⑤ CANSLIM 판정"]
+        assert [h for h in h1 if h in order] == order
+
+    def test_브리핑_소제목(self, analysis):
+        doc = Document(BytesIO(report.build_report(analysis)))
+        h2 = [p.text for p in doc.paragraphs if p.style.name == "Heading 2"]
+        for title in ("무슨 회사인가", "무엇으로 버나 — 주요 제품·서비스 매출 구성",
+                      "실적과 주가 (Performance)", "새로운 변화 (New)", "결론 요약"):
+            assert title in h2
+
+    def test_AI_해석은_CANSLIM_뒤_그리고_결론에_한_줄(self, analysis):
+        ai = "## 한 줄 결론\n규칙 의견에 **동의**합니다.\n\n## 피어 비교\n- 하이닉스"
+        doc = Document(BytesIO(report.build_report(analysis, ai_text=ai)))
+        h1 = [p.text for p in doc.paragraphs if p.style.name == "Heading 1"]
+        assert h1.index("AI 해석 (Claude)") > h1.index("⑤ CANSLIM 판정")
+        assert "규칙 의견에 동의합니다." in all_text(report.build_report(analysis, ai_text=ai))

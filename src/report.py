@@ -13,7 +13,8 @@ from docx import Document
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt
 
-from . import segments as segments_mod
+from . import brief
+from .ai_local import one_liner
 from .models import Source, Verdict
 
 MALGUN = "맑은 고딕"
@@ -140,59 +141,68 @@ def build_report(a, ai_text: str = "") -> bytes:
     bits.append(f"리포트 생성 {dt.date.today().isoformat()}")
     doc.add_paragraph(" · ".join(bits))
 
-    # ── 현재 시세 ─────────────────────────────────────────────────────
-    doc.add_heading("현재 시세", level=1)
+    # ── ① 1분 브리핑 — 무슨 회사·무엇으로 버나·실적·새 재료·결론 ─────
+    tg = getattr(a, "target", None)
+    op = getattr(a, "opinion", None)
+    ver = getattr(a, "verification", None)
+    doc.add_heading("① 1분 브리핑", level=1)
+
     change_txt = ""
     if snap.change is not None and snap.change_pct is not None:
         change_txt = (f" (전일 대비 {snap.change:+,.2f}달러, {snap.change_pct:+.2f}%)" if usd
                       else f" (전일 대비 {snap.change:+,.0f}원, {snap.change_pct:+.2f}%)")
     upside = (f" (상승여력 {snap.upside_pct:+.1f}%)" if snap.upside_pct is not None else "")
-    ratio_52w = (f"{snap.price / snap.high_52w:.0%}"
-                 if snap.price and snap.high_52w else "—")
     _add_table(doc, ["항목", "값"], [
         ["현재가", (snap.money(snap.price) if snap.price else "—") + change_txt],
         ["시가총액", snap.money_big(snap.market_cap) if snap.market_cap else "—"],
-        ["목표주가 평균", (snap.money(snap.target_price) if snap.target_price else "—") + upside],
-        ["투자의견", f"{snap.recomm_mean:.2f} / 5 (5에 가까울수록 매수 우세)"
+        ["52주 최고 대비", brief.high_ratio_text(a)],
+        ["애널리스트 목표가", (snap.money(snap.target_price) if snap.target_price else "—") + upside],
+        ["애널리스트 의견", f"{snap.recomm_mean:.2f} / 5 (5에 가까울수록 매수 우세)"
          if snap.recomm_mean else "—"],
-        ["52주 최고 / 최저", f"{snap.money(snap.high_52w)} / {snap.money(snap.low_52w)}"
-         if snap.high_52w and snap.low_52w else "—"],
-        ["52주 최고 대비", ratio_52w],
     ])
 
-    # ── 요약 (지침 v3 Step 0) ────────────────────────────────────────
-    tg = getattr(a, "target", None)
-    op = getattr(a, "opinion", None)
-    ver = getattr(a, "verification", None)
-    doc.add_heading("요약", level=1)
-    target_text = (f"Bear {snap.money(tg.bear)} ({tg.bear_gap:+.1f}%) · "
-                   f"Base {snap.money(tg.base)} ({tg.base_gap:+.1f}%) · "
-                   f"Bull {snap.money(tg.bull)} ({tg.bull_gap:+.1f}%)"
-                   if tg and tg.ok else "산출 불가")
-    _add_table(doc, ["항목", "값"], [
-        ["CANSLIM", f"{a.canslim.summary} ({a.canslim.tally})"],
-        ["투자의견 (규칙 기반)", op.text + " — " + " / ".join(r for r in op.reasons if r) if op else "—"],
-        ["목표주가 12개월", target_text],
-        ["데이터 신뢰도", ver.tally if ver else "—"],
-    ])
+    doc.add_heading("무슨 회사인가", level=2)
+    doc.add_paragraph(snap.summary or "기업 개요 자료가 없습니다.")
 
-    # ── CANSLIM ──────────────────────────────────────────────────────
-    doc.add_heading("CANSLIM 판정", level=1)
-    doc.add_paragraph(
-        f"{a.canslim.summary} ({a.canslim.tally}) — 7개 항목을 모두 합격해야 충족입니다. "
-        "판단불가는 자료가 없어 못 본 것이라 불합격과 구별하지만 충족으로 치지 않습니다."
-    )
-    _add_table(
-        doc,
-        ["항목", "기준", "실제값", "판정", "세부 조건 · 근거"],
-        [[f"{i.letter} {i.name}", i.criterion, i.actual, i.verdict.value, i.detail]
-         for i in a.canslim.items],
-        widths_cm=[2.0, 3.2, 2.5, 1.9, 6.4],   # A4 본문 폭 ≈ 16cm — 근거 칸을 가장 넓게
-        font_pt=9,
-    )
+    doc.add_heading("무엇으로 버나 — 주요 제품·서비스 매출 구성", level=2)
+    seg = brief.segment_table(a)
+    if seg.missing:
+        doc.add_paragraph(seg.missing)
+    else:
+        _add_table(doc, ["순위", "제품·서비스", "매출 비중", "추정 매출액", "설명"],
+                   [[str(r.rank), f"{r.name} ★" if r.rank == 1 else r.name, r.share, r.amount,
+                     r.description] for r in seg.rows],
+                   widths_cm=[1.2, 3.4, 2.0, 2.7, 6.7], font_pt=9)
+        doc.add_paragraph(seg.note).runs[0].font.size = Pt(8)
 
-    # ── 밸류에이션 ────────────────────────────────────────────────────
-    doc.add_heading("밸류에이션", level=1)
+    doc.add_heading("실적과 주가 (Performance)", level=2)
+    _add_table(doc, ["항목", "값"], [list(line) for line in brief.performance(a).lines], font_pt=9)
+
+    doc.add_heading("새로운 변화 (New)", level=2)
+    news = brief.new_items(a)
+    doc.add_paragraph(f"52주 최고 대비 {brief.high_ratio_text(a)} · "
+                      f"최근 {a.newness.window_days}일 재료 {len(a.newness.items)}건")
+    for n in news:
+        doc.add_paragraph(f"[{n.category}] {n.title} ({n.date} · {n.source})", style="List Bullet")
+    if not news:
+        doc.add_paragraph("최근 재료로 분류된 공시·뉴스가 없습니다.")
+
+    doc.add_heading("결론 요약", level=2)
+    concl = brief.conclusion(a, ai_one_liner=one_liner(ai_text) if ai_text.strip() else "")
+    concl_rows = [
+        ["CANSLIM", concl.canslim],
+        ["투자의견 (규칙 기반)",
+         concl.opinion + (" — " + " / ".join(r for r in op.reasons if r) if op else "")],
+        ["목표주가 12개월", concl.target],
+        ["데이터 신뢰도", concl.reliability],
+    ]
+    if concl.ai_one_liner:
+        concl_rows.append(["AI 한 줄 결론", concl.ai_one_liner])
+    _add_table(doc, ["항목", "값"], concl_rows)
+    doc.add_paragraph("근거는 ③ 목표주가 · ④ 밸류에이션 · ⑤ CANSLIM 절에 있습니다.").runs[0].font.size = Pt(8)
+
+    # ── ② 상세 — 실적·재무 ───────────────────────────────────────────
+    doc.add_heading("② 상세 — 실적 · 재무", level=1)
     if usd:
         eps_unit, eps_digits = "$", 2
         rev_unit, rev_digits, rev_scale = "억$", 0, 1e8
@@ -200,37 +210,53 @@ def build_report(a, ai_text: str = "") -> bytes:
         eps_unit, eps_digits = "원", 0
         rev_unit, rev_digits, rev_scale = "조원", 1, 1e12
 
-    def metric_cells(attr: str, unit: str, digits: int = 2, scale: float = 1.0) -> list[str]:
-        cells = []
-        for c in val.columns:
-            m = getattr(c, attr)
-            cells.append("—" if not m.is_ok else f"{m.value / scale:,.{digits}f}{unit}")
-        return cells
+    # ── 분기 실적 ─────────────────────────────────────────────────────
+    doc.add_heading("분기 실적", level=2)
+    rev_q_unit, rev_q_digits, rev_q_scale = (("억$", 1, 1e8) if usd else ("억원", 0, 1.0))
 
-    headers = ["지표"] + [f"{c.label} ({_SOURCE_MARK.get(c.source, c.source.value)})"
-                          for c in val.columns]
-    _add_table(doc, headers, [
-        ["PER"] + metric_cells("per", "배"),
-        ["PSR"] + metric_cells("psr", "배"),
-        ["PEG"] + metric_cells("peg", ""),
-        ["ROE"] + metric_cells("roe", "%"),
-        ["PBR"] + ([f"{snap.pbr:,.2f}배"] if snap.pbr else ["—"]) + ["—"] * (len(val.columns) - 1),
-        ["EPS (12개월)"] + metric_cells("eps_ttm", eps_unit, eps_digits),
-        ["매출 (12개월)"] + metric_cells("revenue_ttm", rev_unit, rev_digits, rev_scale),
-        ["산출 근거"] + [c.note for c in val.columns],
-    ])
+    def fmt(value: float | None, unit: str, digits: int, scale: float = 1.0) -> str:
+        return "—" if value is None else f"{value / scale:,.{digits}f}{unit}"
 
-    g = val.growth
-    notes = doc.add_paragraph()
-    notes.add_run(
-        f"교차검증 — {val.per_cross_check}\n"
-        f"PEG에 쓴 성장률 — 현재 열은 연간 EPS {g.annual_cagr_years}년 CAGR "
-        f"{g.annual_cagr.text('%')}, 예상 열은 연간 컨센서스 성장률 {g.forward_annual.text('%')}.\n"
-        f"최근 분기 EPS — 전년 동기 대비 {g.quarter_yoy.text('%')}"
-    ).font.size = Pt(9)
+    q_rows = []
+    for p in a.quarterly.periods:
+        eps, rev = a.quarterly.value("EPS", p.key), a.quarterly.value("매출액", p.key)
+        if eps is None and rev is None:
+            continue
+        source = Source.CONSENSUS if p.is_consensus else Source.ACTUAL
+        q_rows.append([p.label, fmt(eps, eps_unit, eps_digits),
+                       fmt(rev, rev_q_unit, rev_q_digits, rev_q_scale), _SOURCE_MARK[source]])
+    if val.derived:
+        d = val.derived
+        q_rows.append([f"{d.key[:4]}.{d.key[4:]}",
+                       fmt(d.values.get("EPS"), eps_unit, eps_digits),
+                       fmt(d.values.get("매출액"), rev_q_unit, rev_q_digits, rev_q_scale),
+                       f"{_SOURCE_MARK[Source.DERIVED]} ({d.method})"])
+    _add_table(doc, ["분기", "EPS", "매출액", "구분"], q_rows)
+
+    # ── 재무 건전성·주주환원 ──────────────────────────────────────────
+    doc.add_heading("재무 건전성·주주환원", level=2)
+    fin_bits = []
+    a_actual_y = [p for p in a.annual.actual_periods() if a.annual.value("EPS", p.key) is not None]
+    if not usd:
+        debt = a.annual.value("부채비율", a_actual_y[-1].key) if a_actual_y else None
+        dps = a.annual.value("주당배당금", a_actual_y[-1].key) if a_actual_y else None
+        fin_bits.append(f"부채비율 {debt:,.1f}%" if debt is not None else "부채비율 확인 불가")
+        if dps is not None:
+            fin_bits.append(f"주당배당금 {dps:,.0f}원")
+        if snap.dividend_yield is not None:
+            fin_bits.append(f"배당수익률 {snap.dividend_yield:,.2f}%")
+        fin_bits.append("FCF·순차입금·총주주환원율은 무료 출처가 없어 확인 불가")
+    else:
+        fin_bits.append(f"부채비율(D/E) {snap.debt_to_equity:,.1f}%"
+                        if snap.debt_to_equity is not None else "부채비율 확인 불가")
+        if snap.fcf is not None:
+            fin_bits.append(f"FCF(최근 연간) ${snap.fcf / 1e9:,.1f}B")
+        if snap.dividend_yield is not None:
+            fin_bits.append(f"배당수익률 {snap.dividend_yield:,.2f}%")
+    doc.add_paragraph(" · ".join(fin_bits))
 
     # ── 목표주가와 투자의견 (지침 v3 Step 5·9·10) ────────────────────
-    doc.add_heading("목표주가와 투자의견", level=1)
+    doc.add_heading("③ 목표주가와 투자의견", level=1)
     band = getattr(a, "band", None)
     if band and band.years and tg:
         metric_reason = ("TTM 이익이 적자라 주당매출(PSR) 밴드로 대체"
@@ -267,83 +293,52 @@ def build_report(a, ai_text: str = "") -> bytes:
             "이 의견은 기계적 규칙의 결과이며 매수·매도 신호가 아닙니다."
         ).runs[0].font.size = Pt(9)
 
-    # ── 재무 건전성·주주환원 ──────────────────────────────────────────
-    doc.add_heading("재무 건전성·주주환원", level=1)
-    fin_bits = []
-    a_actual_y = [p for p in a.annual.actual_periods() if a.annual.value("EPS", p.key) is not None]
-    if not usd:
-        debt = a.annual.value("부채비율", a_actual_y[-1].key) if a_actual_y else None
-        dps = a.annual.value("주당배당금", a_actual_y[-1].key) if a_actual_y else None
-        fin_bits.append(f"부채비율 {debt:,.1f}%" if debt is not None else "부채비율 확인 불가")
-        if dps is not None:
-            fin_bits.append(f"주당배당금 {dps:,.0f}원")
-        if snap.dividend_yield is not None:
-            fin_bits.append(f"배당수익률 {snap.dividend_yield:,.2f}%")
-        fin_bits.append("FCF·순차입금·총주주환원율은 무료 출처가 없어 확인 불가")
-    else:
-        fin_bits.append(f"부채비율(D/E) {snap.debt_to_equity:,.1f}%"
-                        if snap.debt_to_equity is not None else "부채비율 확인 불가")
-        if snap.fcf is not None:
-            fin_bits.append(f"FCF(최근 연간) ${snap.fcf / 1e9:,.1f}B")
-        if snap.dividend_yield is not None:
-            fin_bits.append(f"배당수익률 {snap.dividend_yield:,.2f}%")
-    doc.add_paragraph(" · ".join(fin_bits))
+    # ── 밸류에이션 ────────────────────────────────────────────────────
+    doc.add_heading("④ 밸류에이션", level=1)
 
-    # ── 분기 실적 ─────────────────────────────────────────────────────
-    doc.add_heading("분기 실적", level=1)
-    rev_q_unit, rev_q_digits, rev_q_scale = (("억$", 1, 1e8) if usd else ("억원", 0, 1.0))
+    def metric_cells(attr: str, unit: str, digits: int = 2, scale: float = 1.0) -> list[str]:
+        cells = []
+        for c in val.columns:
+            m = getattr(c, attr)
+            cells.append("—" if not m.is_ok else f"{m.value / scale:,.{digits}f}{unit}")
+        return cells
 
-    def fmt(value: float | None, unit: str, digits: int, scale: float = 1.0) -> str:
-        return "—" if value is None else f"{value / scale:,.{digits}f}{unit}"
+    headers = ["지표"] + [f"{c.label} ({_SOURCE_MARK.get(c.source, c.source.value)})"
+                          for c in val.columns]
+    _add_table(doc, headers, [
+        ["PER"] + metric_cells("per", "배"),
+        ["PSR"] + metric_cells("psr", "배"),
+        ["PEG"] + metric_cells("peg", ""),
+        ["ROE"] + metric_cells("roe", "%"),
+        ["PBR"] + ([f"{snap.pbr:,.2f}배"] if snap.pbr else ["—"]) + ["—"] * (len(val.columns) - 1),
+        ["EPS (12개월)"] + metric_cells("eps_ttm", eps_unit, eps_digits),
+        ["매출 (12개월)"] + metric_cells("revenue_ttm", rev_unit, rev_digits, rev_scale),
+        ["산출 근거"] + [c.note for c in val.columns],
+    ])
 
-    q_rows = []
-    for p in a.quarterly.periods:
-        eps, rev = a.quarterly.value("EPS", p.key), a.quarterly.value("매출액", p.key)
-        if eps is None and rev is None:
-            continue
-        source = Source.CONSENSUS if p.is_consensus else Source.ACTUAL
-        q_rows.append([p.label, fmt(eps, eps_unit, eps_digits),
-                       fmt(rev, rev_q_unit, rev_q_digits, rev_q_scale), _SOURCE_MARK[source]])
-    if val.derived:
-        d = val.derived
-        q_rows.append([f"{d.key[:4]}.{d.key[4:]}",
-                       fmt(d.values.get("EPS"), eps_unit, eps_digits),
-                       fmt(d.values.get("매출액"), rev_q_unit, rev_q_digits, rev_q_scale),
-                       f"{_SOURCE_MARK[Source.DERIVED]} ({d.method})"])
-    _add_table(doc, ["분기", "EPS", "매출액", "구분"], q_rows)
+    g = val.growth
+    notes = doc.add_paragraph()
+    notes.add_run(
+        f"교차검증 — {val.per_cross_check}\n"
+        f"PEG에 쓴 성장률 — 현재 열은 연간 EPS {g.annual_cagr_years}년 CAGR "
+        f"{g.annual_cagr.text('%')}, 예상 열은 연간 컨센서스 성장률 {g.forward_annual.text('%')}.\n"
+        f"최근 분기 EPS — 전년 동기 대비 {g.quarter_yoy.text('%')}"
+    ).font.size = Pt(9)
 
-    # ── 주요 제품·서비스 매출 구성 (한국 종목만 — 출처가 자료를 줄 때) ──
-    segs = getattr(a, "segments", None)
-    if segs is not None:
-        doc.add_heading("주요 제품·서비스 매출 구성", level=1)
-
-        annual_actual = a.annual.actual_periods()
-        rev_won = None
-        if annual_actual:
-            rev_value = a.annual.value("매출액", annual_actual[-1].key)
-            if rev_value is not None:
-                rev_won = rev_value * a.annual.money_unit
-
-        seg_rows = []
-        for rank, s in enumerate(segs.items, start=1):
-            est = segments_mod.amount_text(rev_won * s.share_pct / 100 if rev_won else None)
-            name = f"{s.name} ★" if rank == 1 else s.name
-            seg_rows.append([str(rank), name, f"{s.share_pct:,.1f}%", est, s.description or "—"])
-        _add_table(doc, ["순위", "제품·서비스", "매출 비중", "추정 매출액", "설명"], seg_rows,
-                   widths_cm=[1.2, 3.4, 2.0, 2.7, 6.7], font_pt=9)
-
-        period = f" (기준: {segs.period_label})" if segs.period_label else ""
-        rev_base = (f"최근 확정 연간 매출 {segments_mod.amount_text(rev_won)}"
-                    f"({annual_actual[-1].label})에 비중을 곱한 추정치" if rev_won
-                    else "연간 매출 자료가 없어 금액은 표시하지 못했습니다")
-        note = doc.add_paragraph()
-        note.add_run(
-            f"출처: 네이버 종목분석의 주요제품 매출구성{period} · ★ 매출 비중 1위. "
-            "회사가 제품을 부문으로 묶어 공시하면 부문 이름으로 보이며, 설명은 네이버 기업개요 "
-            f"문장에서 자동으로 뽑은 것이라 없을 수 있습니다. 추정 매출액은 {rev_base}이고, "
-            "내부거래 조정 때문에 '기타'가 음수이거나 비중 합계가 100%와 다를 수 있습니다. "
-            "제품별 이익률과 출시일은 회사가 공개하지 않아 제공하지 못합니다."
-        ).font.size = Pt(9)
+    # ── CANSLIM ──────────────────────────────────────────────────────
+    doc.add_heading("⑤ CANSLIM 판정", level=1)
+    doc.add_paragraph(
+        f"{a.canslim.summary} ({a.canslim.tally}) — 7개 항목을 모두 합격해야 충족입니다. "
+        "판단불가는 자료가 없어 못 본 것이라 불합격과 구별하지만 충족으로 치지 않습니다."
+    )
+    _add_table(
+        doc,
+        ["항목", "기준", "실제값", "판정", "세부 조건 · 근거"],
+        [[f"{i.letter} {i.name}", i.criterion, i.actual, i.verdict.value, i.detail]
+         for i in a.canslim.items],
+        widths_cm=[2.0, 3.2, 2.5, 1.9, 6.4],   # A4 본문 폭 ≈ 16cm — 근거 칸을 가장 넓게
+        font_pt=9,
+    )
 
     # ── AI 해석 (이 PC의 Claude Code — 있을 때만) ────────────────────
     if ai_text.strip():

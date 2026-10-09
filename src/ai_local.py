@@ -12,14 +12,18 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import json
+import re
 import shutil
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 INSTRUCTIONS_PATH = Path(__file__).resolve().parent.parent / "docs" / "claude_project_instructions.md"
+SAVE_DIR = Path(__file__).resolve().parent.parent / ".cache" / "ai"
+ONE_LINER_MAX = 200
 TIMEOUT_SEC = 420
 ALLOWED_TOOLS = ["WebSearch", "WebFetch"]
 BLOCKED_TOOLS = ["Bash", "PowerShell", "Edit", "Write", "NotebookEdit", "Read", "Glob", "Grep", "Agent"]
@@ -53,6 +57,7 @@ class Interpretation:
     text: str            # 마크다운 본문
     seconds: float       # 걸린 시간
     model: str = ""
+    created: str = ""    # 생성 시각 'YYYY-MM-DD HH:MM' (저장본 표시용)
 
 
 def claude_path() -> str | None:
@@ -126,3 +131,50 @@ def interpret(handoff_text: str) -> Interpretation:
         err = proc.stderr.decode("utf-8", errors="replace").strip()
         raise AIError(f"Claude Code 실행 오류: {err[-300:] or proc.returncode}")
     return parse_result(stdout)
+
+
+# ------------------------------------------------------------- 저장·요약
+
+def save_key(region: str, code: str, price_date: str) -> str:
+    """같은 종목·같은 가격 기준일이면 같은 해석을 다시 쓴다."""
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", f"{region}_{code}_{price_date or 'latest'}")
+
+
+def save(key: str, result: Interpretation, base: Path | None = None) -> Interpretation:
+    """해석을 디스크에 저장한다. 생성 시각이 비어 있으면 채운다. 저장 실패는 무시 (화면엔 그대로 보인다)."""
+    if not result.created:
+        result = Interpretation(result.text, result.seconds, result.model,
+                                dt.datetime.now().strftime("%Y-%m-%d %H:%M"))
+    folder = base or SAVE_DIR
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / f"{key}.json").write_text(json.dumps(asdict(result), ensure_ascii=False),
+                                            encoding="utf-8")
+    except OSError:
+        pass
+    return result
+
+
+def load_saved(key: str, base: Path | None = None) -> Interpretation | None:
+    path = (base or SAVE_DIR) / f"{key}.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return Interpretation(text=str(data["text"]), seconds=float(data.get("seconds") or 0),
+                              model=str(data.get("model") or ""), created=str(data.get("created") or ""))
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def one_liner(text: str) -> str:
+    """'## 한 줄 결론' 아래 첫 문단. 제목이 없으면 첫 일반 문단. 굵게 기호는 지운다."""
+    lines = text.splitlines()
+    start = next((i + 1 for i, ln in enumerate(lines) if ln.strip().startswith("#") and "결론" in ln), 0)
+    for ln in lines[start:]:
+        s = ln.strip()
+        if not s or s.startswith(("#", "|", "---")):
+            if s.startswith("#") and start:
+                break
+            continue
+        s = s.lstrip("-* ").replace("**", "")
+        return s if len(s) <= ONE_LINER_MAX else s[:ONE_LINER_MAX - 1] + "…"
+    return ""

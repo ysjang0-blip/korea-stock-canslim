@@ -104,6 +104,37 @@ class Test실행:
             ai_local.interpret("요약")
 
 
+class Test저장과_한줄결론:
+    def test_저장하고_다시_읽는다(self, tmp_path):
+        key = ai_local.save_key("KR", "005930", "20261008")
+        saved = ai_local.save(key, ai_local.Interpretation("## 한 줄 결론\n동의", 12.0, "m"), base=tmp_path)
+        assert saved.created                       # 생성 시각이 채워진다
+        loaded = ai_local.load_saved(key, base=tmp_path)
+        assert loaded == saved
+
+    def test_없거나_깨진_저장본은_None(self, tmp_path):
+        assert ai_local.load_saved("없음", base=tmp_path) is None
+        (tmp_path / "broken.json").write_text("{", encoding="utf-8")
+        assert ai_local.load_saved("broken", base=tmp_path) is None
+
+    def test_키에는_파일명에_쓸_수_없는_글자가_없다(self):
+        assert ai_local.save_key("US", "BRK/B", "") == "US_BRK_B_latest"
+
+    def test_한줄결론_제목_아래_첫_문단(self):
+        text = "## 한 줄 결론\n앱 의견에 **동의**합니다.\n\n---\n\n## 피어 비교\n표"
+        assert ai_local.one_liner(text) == "앱 의견에 동의합니다."
+
+    def test_제목이_없으면_첫_문단(self):
+        assert ai_local.one_liner("첫 문단입니다.\n\n둘째") == "첫 문단입니다."
+
+    def test_너무_길면_자른다(self):
+        line = ai_local.one_liner("## 한 줄 결론\n" + "가" * 500)
+        assert len(line) == ai_local.ONE_LINER_MAX and line.endswith("…")
+
+    def test_결론_절이_비어_있으면_빈_문자열(self):
+        assert ai_local.one_liner("## 한 줄 결론\n\n## 다음 절\n내용") == ""
+
+
 class TestWord변환:
     MD = """## 한 줄 결론
 앱 의견에 **동의**합니다.

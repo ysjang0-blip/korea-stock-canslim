@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 from io import BytesIO
 
 from docx import Document
@@ -17,6 +18,7 @@ from . import brief
 from .ai_local import one_liner
 from .models import Source, Verdict
 
+_MD_LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 MALGUN = "맑은 고딕"
 MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
@@ -73,7 +75,8 @@ def _add_table(doc: Document, headers: list[str], rows: list[list[str]],
 
 
 def _add_rich(paragraph, text: str, size: float | None = None) -> None:
-    """'**굵게**' 표시만 살려 문단에 글을 넣는다."""
+    """'**굵게**' 표시만 살려 문단에 글을 넣는다. 링크 [글](주소) 는 '글 (주소)' 로 푼다."""
+    text = _MD_LINK.sub(r"\1 (\2)", text)
     for i, chunk in enumerate(text.split("**")):
         if not chunk:
             continue
@@ -88,7 +91,7 @@ def _table_cells(line: str) -> list[str]:
 
 
 def add_markdown(doc: Document, markdown: str) -> None:
-    """AI 해석 마크다운을 Word로. 제목(##/###)·목록(-)·표(|)·굵게(**)만 다루는 간단 변환."""
+    """AI 해석 마크다운을 Word로. 제목(#/##/###)·목록(-)·표(|)·굵게(**)만 다루는 간단 변환."""
     lines = markdown.splitlines()
     i = 0
     while i < len(lines):
@@ -106,7 +109,9 @@ def add_markdown(doc: Document, markdown: str) -> None:
                 rows = [r + [""] * (width - len(r)) for r in rows]
                 _add_table(doc, rows[0], rows[1:], font_pt=8)
             continue
-        if stripped.startswith("### "):
+        if stripped.startswith("# "):
+            doc.add_heading(stripped[2:].replace("**", ""), level=1)
+        elif stripped.startswith("### "):
             doc.add_heading(stripped[4:].replace("**", ""), level=3)
         elif stripped.startswith("## "):
             doc.add_heading(stripped[3:].replace("**", ""), level=2)
@@ -122,7 +127,8 @@ def add_markdown(doc: Document, markdown: str) -> None:
 def build_report(a, ai_text: str = "") -> bytes:
     """Analysis 객체 하나를 받아 완성된 .docx 바이트를 돌려준다.
 
-    ai_text 를 주면 (이 PC의 Claude Code 해석) 'AI 해석' 절로 함께 담는다.
+    ai_text 를 주면 (클로드 완성 보고서) 결론 요약에 'AI 한 줄 결론'을 넣는다.
+    보고서 전문은 build_ai_report 로 따로 만든다 (같은 내용이 두 번 실리지 않게).
     """
     snap, val = a.snap, a.valuation
     usd = snap.currency == "USD"
@@ -340,15 +346,6 @@ def build_report(a, ai_text: str = "") -> bytes:
         font_pt=9,
     )
 
-    # ── AI 해석 (이 PC의 Claude Code — 있을 때만) ────────────────────
-    if ai_text.strip():
-        doc.add_heading("AI 해석 (Claude)", level=1)
-        doc.add_paragraph(
-            "앱의 계산 결과를 Claude가 검토·보완한 의견입니다. 수치는 앱 요약과 Claude의 웹 검색 결과이며 "
-            "매수·매도 신호가 아닙니다."
-        ).runs[0].font.size = Pt(8)
-        add_markdown(doc, ai_text)
-
     # ── 데이터 검증 (지침 v3 Step 1) ─────────────────────────────────
     if ver:
         doc.add_heading(f"데이터 검증 — {ver.tally}", level=1)
@@ -397,3 +394,16 @@ def build_report(a, ai_text: str = "") -> bytes:
     buffer = BytesIO()
     doc.save(buffer)
     return buffer.getvalue()
+
+
+def build_ai_report(name: str, text: str, caption: str = "") -> bytes:
+    """클로드 완성 보고서(마크다운, 앱 화면과 같은 순서)를 그대로 Word 한 편으로."""
+    doc = _new_document()
+    if not text.lstrip().startswith("# "):
+        doc.add_heading(f"{name} 분석 보고서 (Claude)", level=0)
+    add_markdown(doc, text)
+    if caption:
+        doc.add_paragraph(caption).runs[0].font.size = Pt(8)
+    buf = BytesIO()
+    doc.save(buf)
+    return buf.getvalue()

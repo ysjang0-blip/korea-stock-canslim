@@ -24,24 +24,13 @@ from pathlib import Path
 INSTRUCTIONS_PATH = Path(__file__).resolve().parent.parent / "docs" / "claude_project_instructions.md"
 SAVE_DIR = Path(__file__).resolve().parent.parent / ".cache" / "ai"
 ONE_LINER_MAX = 200
-TIMEOUT_SEC = 420
+TIMEOUT_SEC = 600
 ALLOWED_TOOLS = ["WebSearch", "WebFetch"]
 BLOCKED_TOOLS = ["Bash", "PowerShell", "Edit", "Write", "NotebookEdit", "Read", "Glob", "Grep", "Agent"]
 
-REQUEST = """아래 '앱 분석 요약'을 받았습니다. 지침의 '앱 분석 요약 입력 (특례)'에 따라 해석해 주세요.
-
-출력 형식 (한국어 마크다운, 이 순서, 서론·맺음 인사 없이 바로 시작):
-## 한 줄 결론
-## 지표 선정과 이익 기준 검토 (Step 3)
-## 피어 비교 (Step 4) — 피어 2~3개, 표 필수, 수치마다 [출처, 기준일]
-## 프리미엄·디스카운트 요인 (Step 7) — 할증/할인 근거 각 2~3개와 멀티플 조정 폭
-## 앱 목표주가 검토 (Step 9) — 밴드·이익 전제가 타당한지, 조정이 필요하면 조정안
-## 투자의견과 논리 (Step 10) — 앱의 규칙 기반 의견에 동의/보완, 핵심 가정 3개, 의견 변경 조건, 6~12개월 촉매, 가장 큰 리스크 2개
-## 이번 해석의 한계
-
+REQUEST = """아래 '앱 분석 요약'을 받았습니다. 지침의 '앱 분석 요약 입력 (특례)'에 따라,
+요약 맨 아래 '출력 형식'의 순서 그대로 완성 보고서 한 편을 한국어 마크다운으로 작성해 주세요.
 웹 검색은 8회 이내로 피어 수치와 최근 1년 내 사실 확인에만 쓰세요.
-요약에 있는 수치는 다시 찾지 말고, 요약과 다른 숫자를 만들어내지 마세요.
-마지막 줄: "이 분석은 투자 판단을 돕는 참고 자료이며, 투자 결정과 결과는 본인 책임입니다."
 
 ---
 

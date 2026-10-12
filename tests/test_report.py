@@ -94,9 +94,30 @@ class Test리포트순서:
                       "실적과 주가 (Performance)", "새로운 변화 (New)", "결론 요약"):
             assert title in h2
 
-    def test_AI_해석은_CANSLIM_뒤_그리고_결론에_한_줄(self, analysis):
-        ai = "## 한 줄 결론\n규칙 의견에 **동의**합니다.\n\n## 피어 비교\n- 하이닉스"
-        doc = Document(BytesIO(report.build_report(analysis, ai_text=ai)))
-        h1 = [p.text for p in doc.paragraphs if p.style.name == "Heading 1"]
-        assert h1.index("AI 해석 (Claude)") > h1.index("⑤ CANSLIM 판정")
-        assert "규칙 의견에 동의합니다." in all_text(report.build_report(analysis, ai_text=ai))
+    def test_AI_보고서는_결론에_한_줄만_넣고_전문은_따로(self, analysis):
+        ai = "\n".join(["### 결론 한 줄", "규칙 의견에 **동의**합니다.", "", "## 피어 비교", "- 하이닉스"])
+        text = all_text(report.build_report(analysis, ai_text=ai))
+        assert "규칙 의견에 동의합니다." in text
+        assert "하이닉스" not in text   # 전문은 앱 리포트에 중복으로 싣지 않는다
+
+
+class Test클로드보고서Word:
+    MD = "\n".join([
+        "# 삼성전자 분석 보고서 (2026-10-08)",
+        "| 항목 | 내용 |", "|---|---|", "| 현재가 | 254,000원 |",
+        "## ① 1분 브리핑", "### 무슨 회사인가", "반도체 회사",
+        "## ⑤ CANSLIM 판정", "- C 🟢",
+    ])
+
+    def test_마크다운_제목_순서를_그대로_옮긴다(self):
+        data = report.build_ai_report("삼성전자", self.MD, "Claude Code · 테스트")
+        doc = Document(BytesIO(data))
+        heads = [(p.style.name, p.text) for p in doc.paragraphs if p.style.name.startswith("Heading")]
+        assert heads == [("Heading 1", "삼성전자 분석 보고서 (2026-10-08)"), ("Heading 2", "① 1분 브리핑"),
+                         ("Heading 3", "무슨 회사인가"), ("Heading 2", "⑤ CANSLIM 판정")]
+        text = all_text(data)
+        assert "254,000원" in text and "Claude Code · 테스트" in text
+
+    def test_제목이_없으면_종목명으로_제목을_단다(self):
+        doc = Document(BytesIO(report.build_ai_report("삼성전자", "본문만")))
+        assert "삼성전자 분석 보고서" in doc.paragraphs[0].text

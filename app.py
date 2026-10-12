@@ -219,24 +219,37 @@ if snap.consensus_date:
     _fresh_bits.append(f"컨센서스: {snap.consensus_date}")
 st.caption("🗓 기준일 — " + " · ".join(_fresh_bits))
 
-# AI 해석: 같은 종목·같은 가격 기준일이면 저장본을 다시 쓴다 (버튼을 눌렀을 때만 새로 실행)
+# 클로드 보고서: 같은 종목·같은 가격 기준일이면 저장본을 다시 쓴다 (버튼을 눌렀을 때만 새로 실행)
 _ai_local = ai_local.available()
 _ai_key = ai_local.save_key(a.ref.region, a.ref.code, snap.price_date)
 _ai = st.session_state.get(f"ai:{_ai_key}") or (ai_local.load_saved(_ai_key) if _ai_local else None)
 _handoff_text = handoff.build_handoff(a)
 
-_btn_word, _btn_ai, _ = st.columns([1.4, 1.4, 4])
+_btn_word, _btn_ai, _btn_ai_doc, _ = st.columns([1.4, 1.4, 1.4, 2.6])
 _btn_word.download_button(
-    "📄 Word 리포트" + (" (AI 포함)" if _ai else ""),
+    "📄 Word 리포트",
     data=report.build_report(a, ai_text=_ai.text if _ai else ""),
     file_name=f"{snap.name}_분석리포트_{snap.price_date or '최신'}.docx",
     mime=report.MIME,
     use_container_width=True,
 )
+_ai_caption = (f"Claude Code · {_ai.model or '구독 기본 모델'} · {_ai.seconds:.0f}초"
+               + (f" · 생성 {_ai.created}" if _ai.created else "")
+               + " · 앱 수치와 Claude의 검토·웹 검색을 합친 보고서이며 매수·매도 신호가 아닙니다.") if _ai else ""
+if _ai:
+    _btn_ai_doc.download_button(
+        "📄 클로드 보고서",
+        data=report.build_ai_report(snap.name, _ai.text, _ai_caption),
+        file_name=f"{snap.name}_클로드보고서_{snap.price_date or '최신'}.docx",
+        mime=report.MIME,
+        use_container_width=True,
+        help="클로드가 앱 화면과 같은 순서로 정리한 완성 보고서 (Word)",
+    )
 if _ai_local:
-    if _btn_ai.button("🤖 AI 해석 다시" if _ai else "🤖 AI 해석", use_container_width=True,
-                      help="이 PC의 Claude Code(클로드 구독)로 해석합니다. 추가 요금 없음, 1~3분."):
-        with st.spinner("Claude가 해석하는 중… (1~3분, 웹 검색 포함 · 화면을 조작하지 마세요)"):
+    if _btn_ai.button("🤖 클로드 보고서 다시" if _ai else "🤖 클로드 보고서", use_container_width=True,
+                      help="이 PC의 Claude Code(클로드 구독)가 앱 화면과 같은 순서로 완성 보고서를 씁니다. "
+                           "추가 요금 없음, 3~6분."):
+        with st.spinner("Claude가 보고서를 쓰는 중… (3~6분, 웹 검색 포함 · 화면을 조작하지 마세요)"):
             try:
                 _ai = ai_local.save(_ai_key, ai_local.interpret(_handoff_text))
                 st.session_state[f"ai:{_ai_key}"] = _ai
@@ -245,17 +258,16 @@ if _ai_local:
                 st.error(str(exc))
 else:
     with _btn_ai.popover("🤖 클로드용 요약", use_container_width=True):
-        st.caption("복사해 **클로드 프로젝트**(지침 v3)에 붙여넣으면 피어 비교·프리미엄/디스카운트·"
-                   "핵심 가정·리스크 해석을 받습니다. 이 PC에서 `run.bat` 으로 켜면 버튼 하나로 바로 해석됩니다.")
+        st.caption("복사해 **클로드 프로젝트**(지침 v3)에 붙여넣으면, 앱 화면과 같은 순서"
+                   "(1분 브리핑 → 상세 → 목표주가 → 밸류에이션 → CANSLIM)의 **완성 보고서**를 받습니다. "
+                   "이 PC에서 `run.bat` 으로 켜면 버튼 하나로 바로 만들어집니다.")
         st.code(_handoff_text, language="markdown")
 
 _ai_line = ai_local.one_liner(_ai.text) if _ai else ""
 if _ai:
-    with st.expander(f"🤖 AI 해석 — {_ai_line or '펼쳐 보기'}"):
+    with st.expander(f"🤖 클로드 보고서 — {_ai_line or '펼쳐 보기'}"):
         st.markdown(_ai.text)
-        st.caption(f"Claude Code · {_ai.model or '구독 기본 모델'} · {_ai.seconds:.0f}초"
-                   + (f" · 생성 {_ai.created}" if _ai.created else "")
-                   + " · 앱의 기계적 계산을 검토·보완한 의견이며 매수·매도 신호가 아닙니다.")
+        st.caption(_ai_caption)
 
 # ─────────────────────────────────────────────────────────── ① 1분 브리핑
 
@@ -699,7 +711,7 @@ with st.expander("이 분석의 한계 — 반드시 읽어 주세요"):
 - **목표주가와 투자의견은 기계적 규칙의 결과입니다.** 밴드는 최근 3개 확정 연도의 고점·저점 ÷ 그 해
   EPS이고, 이익이 급감했던 해가 밴드를 부풀릴 수 있습니다(경고가 뜨면 그 연도 제외 여부를 직접
   판단하세요). 일회성 이익·업종 특성·경쟁 구도 같은 정성 요인은 반영하지 못하며, 그 몫은
-  맨 위 'AI 해석'(또는 클로드 프로젝트)이 담당합니다.
+  맨 위 '클로드 보고서'(또는 클로드 프로젝트)이 담당합니다.
 - **차트는 그림으로만 표시합니다.** 휴대폰에서 차트 위를 끌어도 화면이 내려가도록 확대·이동 기능을 껐습니다.
 {market_specific}
 - 애널리스트 커버리지가 없는 소형주는 컨센서스가 아예 없는 것이 정상입니다.

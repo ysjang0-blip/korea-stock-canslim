@@ -82,3 +82,27 @@ class Test결론:
 
     def test_AI_한_줄을_싣는다(self, analysis):
         assert brief.conclusion(analysis, ai_one_liner="동의").ai_one_liner == "동의"
+
+
+class TestPER_PEG요약:
+    def test_삼성_fixture_PER과_Fwd(self, snapshot, quarterly, annual):
+        from src import valuation
+        a = SimpleNamespace(snap=snapshot, valuation=valuation.compute_valuation(snapshot, quarterly, annual))
+        m = brief.multiples(a)
+        cur = a.valuation.columns[0]
+        assert m.per == f"{cur.per.value:,.1f}배"
+        assert m.per_sub.startswith("Fwd ") or m.per_sub == "TTM 기준"
+        if cur.peg.is_ok:
+            assert m.peg == f"{cur.peg.value:,.2f}" and "연평균" in m.peg_sub
+        else:
+            assert m.peg == "—" and m.peg_sub
+
+    def test_PER_없으면_이유를_보여준다(self, snapshot, quarterly, annual):
+        from src import valuation
+        from src.models import Metric
+        val = valuation.compute_valuation(snapshot, quarterly, annual)
+        val.columns[0].per = Metric.na("TTM 적자")
+        val.columns[0].peg = Metric.na("PER이 성립하지 않아 PEG도 성립하지 않음")
+        m = brief.multiples(SimpleNamespace(snap=snapshot, valuation=val))
+        assert m.per == "—" and "적자" in m.per_sub
+        assert m.peg == "—" and "PEG" in m.peg_sub

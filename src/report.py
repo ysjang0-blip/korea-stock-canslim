@@ -157,14 +157,17 @@ def build_report(a, ai_text: str = "") -> bytes:
     if snap.change is not None and snap.change_pct is not None:
         change_txt = (f" (전일 대비 {snap.change:+,.2f}달러, {snap.change_pct:+.2f}%)" if usd
                       else f" (전일 대비 {snap.change:+,.0f}원, {snap.change_pct:+.2f}%)")
+    mult = brief.multiples(a)
     upside = (f" (상승여력 {snap.upside_pct:+.1f}%)" if snap.upside_pct is not None else "")
     _add_table(doc, ["항목", "값"], [
         ["현재가", (snap.money(snap.price) if snap.price else "—") + change_txt],
-        ["시가총액", snap.money_big(snap.market_cap) if snap.market_cap else "—"],
+        ["PER", f"{mult.per} ({mult.per_sub})"],
+        ["PEG", f"{mult.peg} ({mult.peg_sub})"],
         ["52주 최고 대비", brief.high_ratio_text(a)],
         ["애널리스트 목표가", (snap.money(snap.target_price) if snap.target_price else "—") + upside],
         ["애널리스트 의견", f"{snap.recomm_mean:.2f} / 5 (5에 가까울수록 매수 우세)"
          if snap.recomm_mean else "—"],
+        ["시가총액 (참고)", snap.money_big(snap.market_cap) if snap.market_cap else "—"],
     ])
 
     doc.add_heading("무슨 회사인가", level=2)

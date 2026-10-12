@@ -37,7 +37,7 @@ REPORT_FORMAT = f"""## 출력 형식 — 완성 보고서 (앱 화면과 같은 
 검색으로 새로 얻은 수치에만 [출처, 기준일]을 붙이십시오. 수치 비교는 표를 쓰십시오.
 
 # {{종목명}} 분석 보고서 ({{가격 기준일}})
-표 하나(항목 | 내용): 현재가 · 시가총액 · 52주 최고 대비 · CANSLIM 판정 · 목표주가 Bear–Base–Bull · 최종 투자의견 · 데이터 신뢰도
+표 하나(항목 | 내용), 이 순서로: 현재가 · PER(TTM, Fwd 함께) · PEG(성장률 기준 함께) · 52주 최고 대비 · CANSLIM 판정 · 목표주가 Bear–Base–Bull · 최종 투자의견 · 데이터 신뢰도 · 시가총액(참고)
 
 ## {SECTION_TITLES[0]}
 ### 무슨 회사인가
@@ -129,9 +129,11 @@ def build_handoff(a: "Analysis") -> str:
     # ── ① 1분 브리핑 자료 ──
     add(f"\n## {SECTION_TITLES[0]} 자료")
     add("### 시세")
-    add(f"- 현재가 {money(snap.price)} · 시가총액 {snap.money_big(snap.market_cap)}"
-        f" · 52주 최고 대비 {brief.high_ratio_text(a)}"
-        if snap.price and snap.market_cap else f"- 현재가 {money(snap.price)}")
+    mult = brief.multiples(a)
+    add(f"- 현재가 {money(snap.price)} · PER {mult.per} ({mult.per_sub}) · PEG {mult.peg} ({mult.peg_sub})")
+    add(f"- 52주 최고 대비 {brief.high_ratio_text(a)}")
+    if snap.market_cap:
+        add(f"- 시가총액(참고) {snap.money_big(snap.market_cap)}")
     for c in (ver.checks if ver else []):
         if c.item.startswith(("50일선", "수익률")):
             add(f"- {c.item}: {c.value}")

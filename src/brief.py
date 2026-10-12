@@ -161,3 +161,33 @@ def conclusion(a: "Analysis", ai_one_liner: str = "") -> Conclusion:
         reliability=ver.tally if ver else "—",
         ai_one_liner=ai_one_liner,
     )
+
+
+@dataclass(frozen=True)
+class Multiples:
+    per: str          # 'PER 11.2배' 칸 값 (TTM)
+    per_sub: str      # 'Fwd 5.5배' 또는 성립하지 않는 이유
+    peg: str
+    peg_sub: str      # 성장률 기준 또는 성립하지 않는 이유
+
+
+def multiples(a: "Analysis") -> Multiples:
+    """요약 카드용 PER(TTM·Fwd)과 PEG. 숫자는 ④ 밸류에이션 표의 '현재' 열과 같다."""
+    s, val = a.snap, a.valuation
+    cur = val.columns[0] if val.columns else None
+    fwd = (f"Fwd {s.price / s.cns_eps_naver:,.1f}배"
+           if s.price and s.cns_eps_naver and s.cns_eps_naver > 0 else "")
+    if cur and cur.per.is_ok:
+        per, per_sub = f"{cur.per.value:,.1f}배", fwd or "TTM 기준"
+    else:
+        per = "—"
+        per_sub = (cur.per.note if cur and cur.per.note else "TTM 적자 또는 자료 없음") \
+            + (f" · {fwd}" if fwd else "")
+    g = val.growth
+    if cur and cur.peg.is_ok:
+        peg = f"{cur.peg.value:,.2f}"
+        peg_sub = (f"EPS {g.annual_cagr_years}년 연평균 {g.annual_cagr.value:+,.0f}% 기준 · "
+                   + ("1 미만 = 성장 대비 저평가" if cur.peg.value < 1 else "1 이상 = 성장 대비 비쌈"))
+    else:
+        peg, peg_sub = "—", (cur.peg.note if cur and cur.peg.note else "성장률을 구할 수 없음")
+    return Multiples(per, per_sub, peg, peg_sub)

@@ -281,6 +281,8 @@ if snap.change is not None and snap.change_pct is not None:
 _upside = (f'<div class="d" style="color:{C["muted"]}">상승여력 {snap.upside_pct:+.1f}%</div>'
            if snap.upside_pct is not None else "")
 
+_mult = brief.multiples(a)
+
 
 def _stat(name: str, value: str, extra: str = "") -> str:
     return f'<div class="stat"><div class="n">{name}</div><div class="v">{value}</div>{extra}</div>'
@@ -289,13 +291,15 @@ def _stat(name: str, value: str, extra: str = "") -> str:
 st.markdown(
     '<div class="flexrow">'
     + _stat("현재가", snap.money(snap.price) if snap.price else "—", _change)
-    + _stat("시가총액", snap.money_big(snap.market_cap) if snap.market_cap else "—")
+    + _stat("PER", _mult.per, f'<div class="d" style="color:{C["muted"]}">{_mult.per_sub}</div>')
+    + _stat("PEG", _mult.peg, f'<div class="d" style="color:{C["muted"]}">{_mult.peg_sub}</div>')
     + _stat("52주 최고 대비", f"{snap.price / snap.high_52w:.0%}" if snap.price and snap.high_52w else "—",
             f'<div class="d" style="color:{C["muted"]}">최고 {snap.money(snap.high_52w)}</div>'
             if snap.high_52w else "")
     + _stat("애널리스트 목표가", snap.money(snap.target_price) if snap.target_price else "—", _upside)
     + _stat("애널리스트 의견", f"{snap.recomm_mean:.2f} / 5" if snap.recomm_mean else "—",
             f'<div class="d" style="color:{C["muted"]}">5에 가까울수록 매수</div>')
+    + _stat("시가총액 (참고)", snap.money_big(snap.market_cap) if snap.market_cap else "—")
     + "</div>",
     unsafe_allow_html=True,
 )

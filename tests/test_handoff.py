@@ -77,3 +77,14 @@ class Test출력형식:
 
     def test_로컬_요청도_형식을_따르라고_한다(self):
         assert "출력 형식" in ai_local.REQUEST
+
+
+class Test미국매출구성:
+    def test_앱에_매출구성이_없으면_클로드에게_검색으로_채우라고_한다(self, analysis):
+        analysis.snap.currency = "USD"
+        text = handoff.build_handoff(analysis)
+        assert "클로드 작업" in text and "10-K" in text
+
+    def test_한국도_자료를_못_받으면_보완을_지시한다(self, analysis):
+        analysis.segments = None
+        assert "클로드 작업" in handoff.build_handoff(analysis)

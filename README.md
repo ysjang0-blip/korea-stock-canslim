@@ -169,6 +169,9 @@ src/fundamentals.py 재무 정규화 — 행을 순서가 아닌 라벨로 조�
 src/valuation.py    PER·PSR·PEG·ROE, 롤링 TTM 방식 예상 밸류에이션
 src/canslim.py      CANSLIM 7개 항목 판정 (기준: docs/canslim_criteria.md)
 src/eps_history.py  옛 분기 EPS 보강 — 야후 실적 발표 이력 + 재무표 교차검증
+src/crosscheck.py    분기 EPS 공시 교차검증 공통 비교 (판정은 안 바꾸고 검증 표 등급만 올림)
+src/sec.py           미국 분기 EPS 대조용 — SEC EDGAR (환경변수 SEC_USER_AGENT="앱이름 이메일")
+src/dart.py          한국 분기 EPS 대조용 — DART OpenAPI (환경변수 DART_API_KEY, 무료 발급)
 src/segments.py     주요 제품·서비스 매출 구성 (한국) — 네이버 종목분석 파싱 + 설명 추출
 src/bands.py        밸류에이션 밴드 · 목표주가 Bear/Base/Bull · 투자의견 결합 규칙
 src/verification.py 데이터 검증 표 — 시총 검산, PER 교차검증, 신뢰도 등급

@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from . import bands, canslim, eps_history, fundamentals, newness as newness_mod, prices, segments as segments_mod, tickers, valuation, verification as verification_mod, yahoo
+from . import bands, canslim, crosscheck, dart, eps_history, fundamentals, newness as newness_mod, prices, segments as segments_mod, sec, tickers, valuation, verification as verification_mod, yahoo
 from .fundamentals import FinancialTable, Snapshot
 from .models import CanslimResult
 from .newness import Newness
@@ -78,6 +78,7 @@ def _run_kr(ref: StockRef) -> Analysis:
 
     return _assemble(ref, snap, quarterly, annual, stock_df, index_df, index_name, fresh,
                      close_time=prices.KR_MARKET_CLOSE, tz=prices.KST, eps_note=ext.note,
+                     eps_cross=dart.cross_check(ref.code, quarterly),
                      segs=segments_mod.load(ref.code, summary=snap.summary))
 
 
@@ -92,7 +93,8 @@ def _run_us(ref: StockRef) -> Analysis:
     ext = eps_history.extend_quarterly(quarterly, eps_history.fetch_reported_eps(ref.code, months))
 
     return _assemble(ref, snap, quarterly, annual, stock_df, index_df, yahoo.SP500_NAME, fresh,
-                     close_time=US_MARKET_CLOSE, tz=US_TZ, eps_note=ext.note)
+                     close_time=US_MARKET_CLOSE, tz=US_TZ, eps_note=ext.note,
+                     eps_cross=sec.cross_check(ref.code, quarterly))
 
 
 def _assemble(
@@ -107,6 +109,7 @@ def _assemble(
     close_time: dt.time,
     tz: dt.tzinfo,
     eps_note: str = "",
+    eps_cross: crosscheck.CrossCheck | None = None,
     segs: segments_mod.SegmentBreakdown | None = None,
 ) -> Analysis:
     val = valuation.compute_valuation(snap, quarterly, annual)
@@ -131,6 +134,7 @@ def _assemble(
     ver = verification_mod.build(
         snap, quarterly, annual, val, stock_done, index_done, index_name,
         eps_supplemented=eps_history.EPS_REPORTED in quarterly.rows,
+        eps_cross=eps_cross,
     )
 
     return Analysis(

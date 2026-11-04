@@ -76,8 +76,10 @@ def _write_cache(path: Path, text: str) -> None:
         pass  # 캐시 실패는 조회 실패가 아니다
 
 
-def fetch_text(url: str, ttl: int = DEFAULT_TTL) -> str:
-    """URL을 받아 본문 문자열을 돌려준다. 캐시가 유효하면 네트워크를 타지 않는다."""
+def fetch_text(url: str, ttl: int = DEFAULT_TTL, headers: dict | None = None) -> str:
+    """URL을 받아 본문 문자열을 돌려준다. 캐시가 유효하면 네트워크를 타지 않는다.
+
+    headers 를 주면 네이버용 기본 헤더 대신 그것을 쓴다 (SEC·DART 같은 공식 API 용)."""
     path = _cache_path(url)
     cached = _read_cache(path, ttl)
     if cached is not None:
@@ -89,7 +91,7 @@ def fetch_text(url: str, ttl: int = DEFAULT_TTL) -> str:
             time.sleep(1.5 * (2**(attempt - 1)))  # 1.5s, 3s
         _throttle()
         try:
-            resp = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+            resp = requests.get(url, headers=headers or HEADERS, timeout=TIMEOUT)
         except requests.RequestException as exc:
             last_error = exc
             continue

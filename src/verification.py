@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from . import prices
+from .crosscheck import CrossCheck
 from .fundamentals import FinancialTable, Snapshot
 from .valuation import EPS, REVENUE, ValuationResult
 
@@ -74,6 +75,7 @@ def build(
     index_done: pd.DataFrame,
     index_name: str,
     eps_supplemented: bool = False,
+    eps_cross: CrossCheck | None = None,
 ) -> Verification:
     v = Verification()
     src_price = f"{snap.source_name} 시세"
@@ -128,6 +130,11 @@ def build(
     if eps_supplemented:
         q_text += " (+야후 발표 EPS 이력 보강)"
     v.checks.append(DataCheck("분기 EPS·매출", q_text, src_fin, SINGLE if q_actual else MISSING))
+    if eps_cross is not None:
+        # 매출은 공시와 맞춰 보지 않았으므로 위 행은 그대로 두고, EPS 만 별도 행으로 등급을 올린다
+        v.checks.append(DataCheck(
+            "분기 EPS (공시 교차검증)", eps_cross.note, f"{src_fin} vs {eps_cross.source}",
+            CONFIRMED if eps_cross.ok else (SINGLE if q_actual else MISSING)))
 
     a_actual = [p for p in annual.actual_periods() if annual.value(EPS, p.key) is not None]
     v.checks.append(DataCheck("연간 EPS", f"확정 {len(a_actual)}개년",

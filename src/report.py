@@ -383,6 +383,8 @@ def build_report(a, ai_text: str = "") -> bytes:
         ]
     if getattr(a, "eps_history_note", ""):
         limits.append(a.eps_history_note + ".")
+    for n in getattr(a, "lag_notes", []) or []:
+        limits.append(n + ".")
     for line in limits:
         doc.add_paragraph(line, style="List Bullet")
 

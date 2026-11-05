@@ -116,6 +116,10 @@ def distribution_days(index: pd.DataFrame, window: int = M_DIST_WINDOW,
 # --------------------------------------------------------------- 항목별 판정
 
 def _actual_quarters(quarterly: FinancialTable, row: str) -> list[Period]:
+    if row == EPS_REPORTED:
+        # 발표 이력은 재무표(네이버·야후)보다 한 분기 빨리 나올 수 있어, 재무표에 없는 분기도 포함한다
+        return [Period(key=k, title=f"{k[:4]}.{k[4:]}.", is_consensus=False)
+                for k in sorted(quarterly.rows.get(row, {})) if quarterly.value(row, k) is not None]
     return [p for p in quarterly.actual_periods() if quarterly.value(row, p.key) is not None]
 
 
@@ -146,20 +150,37 @@ def _year_ago(p: Period) -> str:
     return f"{p.year - 1}{p.month:02d}"
 
 
-def _c_eps_row(quarterly: FinancialTable) -> tuple[str, bool]:
-    """C1·C2 에 쓸 EPS 행. 재무표 EPS 로 C2 까지 판정할 수 있으면 그것을, 아니면(재무표가 5분기뿐)
-    야후 발표 EPS 이력(`EPS(발표)`)이 최신·직전 분기와 각각의 전년 동기를 모두 갖고 있을 때 그것을 쓴다.
+def _months(p: Period) -> int:
+    return p.year * 12 + p.month
+
+
+def c_eps_row(quarterly: FinancialTable) -> tuple[str, bool, bool]:
+    """C1·C2·C3 에 쓸 EPS 행과 (발표 행 사용 여부, 재무표보다 새 분기까지 앞당겼는지).
+
+    1) 야후 발표 이력에 재무표보다 **새 분기**가 있으면 그것을 최신 분기로 삼는다 (직전 분기·각각의
+       전년 동기까지 모두 있을 때). 재무표 갱신이 한 분기 늦어도 가장 최근 실적으로 판정하기 위해서다.
+    2) 아니면, 재무표 EPS 로 C2 까지 판정할 수 있으면 그것을, 재무표가 5분기뿐이라 못 하면
+       발표 이력이 최신·직전 분기와 각각의 전년 동기를 모두 가졌을 때 그것을 쓴다.
     같은 행끼리만 비교하므로 두 출처의 EPS 정의 차이가 증가율에 섞이지 않는다."""
     periods = _actual_quarters(quarterly, EPS)
     if len(periods) < 2:
-        return EPS, False
+        return EPS, False, False
     latest, prev = periods[-1], periods[-2]
+
+    reported = _actual_quarters(quarterly, EPS_REPORTED)
+    if len(reported) >= 2 and reported[-1].key > latest.key:
+        new, before = reported[-1], reported[-2]
+        needed = (new.key, before.key, _year_ago(new), _year_ago(before))
+        if _months(new) - _months(before) == 3 and all(
+                quarterly.value(EPS_REPORTED, k) is not None for k in needed):
+            return EPS_REPORTED, True, True
+
     if quarterly.value(EPS, _year_ago(prev)) is not None:
-        return EPS, False
+        return EPS, False, False
     needed = (latest.key, prev.key, _year_ago(latest), _year_ago(prev))
     if all(quarterly.value(EPS_REPORTED, k) is not None for k in needed):
-        return EPS_REPORTED, True
-    return EPS, False
+        return EPS_REPORTED, True, False
+    return EPS, False, False
 
 
 def _item_c(quarterly: FinancialTable, growth: GrowthRates, snap: Snapshot) -> CanslimItem:
@@ -168,7 +189,7 @@ def _item_c(quarterly: FinancialTable, growth: GrowthRates, snap: Snapshot) -> C
         f"분기 EPS 전년동기比 +{C_EPS_YOY_MIN:.0f}% 이상 2분기 연속 · 직전 분기보다 EPS 증가 · "
         f"분기 매출 전년동기比 +{C_REVENUE_YOY_MIN:.0f}% 이상"
     )
-    eps_row, from_reported = _c_eps_row(quarterly)
+    eps_row, from_reported, advanced = c_eps_row(quarterly)
     tag = " [발표EPS]" if from_reported else ""
     c1, rate1, latest = _yoy_check(quarterly, eps_row, 0, "C1", f"최근 분기 EPS 전년比{tag}", C_EPS_YOY_MIN)
     c2, _, prev = _yoy_check(quarterly, eps_row, 1, "C2", f"직전 분기 EPS 전년比{tag}", C_EPS_YOY_MIN)
@@ -177,7 +198,9 @@ def _item_c(quarterly: FinancialTable, growth: GrowthRates, snap: Snapshot) -> C
         c3 = SubCheck("C3", "직전 분기 대비 EPS", "확정 분기 2개 미만", None)
         now_eps = prev_eps = None
     else:
-        now_eps, prev_eps = quarterly.value(EPS, latest.key), quarterly.value(EPS, prev.key)
+        # 새 분기까지 앞당긴 경우엔 재무표에 그 분기가 없으므로 C3 도 발표 EPS 로 본다
+        c3_row = eps_row if advanced else EPS
+        now_eps, prev_eps = quarterly.value(c3_row, latest.key), quarterly.value(c3_row, prev.key)
         diff = now_eps - prev_eps
         diff_text = f"{diff:+,.2f}" if snap.currency == "USD" else f"{diff:+,.0f}"
         c3 = SubCheck("C3", f"직전 분기 대비 EPS({prev.label}→{latest.label})",
@@ -197,7 +220,13 @@ def _item_c(quarterly: FinancialTable, growth: GrowthRates, snap: Snapshot) -> C
             f"수익 증가 중 — 직전 {prev.label} EPS {snap.money(prev_eps)} → 최근 {latest.label} "
             f"EPS {snap.money(now_eps)}. 전년比 문턱은 못 넘었지만 분기 EPS와 매출이 함께 늘고 있습니다"
         )
-    if from_reported:
+    if advanced:
+        rev_latest = (_actual_quarters(quarterly, REVENUE) or [None])[-1]
+        notes.append(
+            f"재무표에는 아직 없는 {latest.label} 분기 실적이 야후 실적 발표 이력에 있어, 그 분기를 최근 분기로 "
+            "EPS(C1~C3)를 판정했습니다 (같은 이력끼리 비교하므로 증가율에 출처 차이가 섞이지 않습니다)"
+            + (f". 매출(C4)은 재무표의 최신 {rev_latest.label} 분기 기준입니다" if rev_latest else ""))
+    elif from_reported:
         notes.append("C1·C2는 재무표가 5분기뿐이라 야후 실적 발표 EPS 이력으로 판정했습니다 "
                      "(같은 이력끼리 비교하므로 표의 EPS와 값이 조금 달라도 증가율에는 섞이지 않습니다)")
     if rate1 is not None and rate1 > C_BASE_EFFECT_PCT:
@@ -206,7 +235,7 @@ def _item_c(quarterly: FinancialTable, growth: GrowthRates, snap: Snapshot) -> C
         notes.append("전년 동기가 적자인 분기는 증가율 대신 흑자 전환 여부로 봤습니다")
 
     # 확정실적이 한 분기 늦게 반영될 수 있음을 밝히고, 다음 분기 컨센서스를 참고로 붙인다
-    if growth.next_quarter_label:
+    if growth.next_quarter_label and not advanced:
         line = (f"최신 확정 분기는 {growth.latest_quarter_label}이며 "
                 f"{growth.next_quarter_label} 분기는 아직 컨센서스만 있습니다")
         if growth.next_quarter_yoy.is_ok:

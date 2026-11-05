@@ -123,6 +123,13 @@ def build_handoff(a: "Analysis") -> str:
     add(f"# {snap.name} ({a.ref.code} · {a.ref.market}) — 앱 분석 요약")
     add(f"생성 {dt.date.today().isoformat()} · 가격 기준일 {snap.price_date_label or '—'}"
         + (f" · 컨센서스 {snap.consensus_date}" if snap.consensus_date else ""))
+    if getattr(a, "lag_notes", None):
+        add("")
+        add(f"> ⏱ **{a.lag_notes[0]}**")
+        for n in a.lag_notes[1:]:
+            add(f"> - {n}")
+        add("> - **클로드 작업**: 최근 분기 매출·PER 등이 한 분기 늦은 값입니다. 새 분기 실적 발표 자료를 검색해 "
+            "보완하고, 앱 값과 다르면 출처와 함께 밝히세요.")
     add("")
     add(HEADER_INSTRUCTION)
 

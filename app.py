@@ -214,10 +214,18 @@ st.subheader(f"{snap.name} · {a.ref.code} · {a.ref.market}")
 latest_actual = a.quarterly.actual_periods()
 _fresh_bits = [f"가격: {snap.price_date_label or '—'} 종가"]
 if latest_actual:
-    _fresh_bits.append(f"재무: {latest_actual[-1].label} 분기까지 확정")
+    _fresh_bits.append(f"재무: {latest_actual[-1].label} 분기까지 확정"
+                       + (" ⏱ 새 분기 반영 대기" if a.lag_notes else ""))
 if snap.consensus_date:
     _fresh_bits.append(f"컨센서스: {snap.consensus_date}")
 st.caption("🗓 기준일 — " + " · ".join(_fresh_bits))
+if a.lag_notes:
+    # 재무표가 새 분기를 아직 못 실었을 때 — 어떤 값이 반영됐고 어떤 값이 늦은지 눈에 띄게
+    st.warning("⏱ **" + a.lag_notes[0] + "**
+
+" + "
+
+".join("- " + n for n in a.lag_notes[1:]))
 
 # 클로드 보고서: 같은 종목·같은 가격 기준일이면 저장본을 다시 쓴다 (버튼을 눌렀을 때만 새로 실행)
 _ai_local = ai_local.available()
@@ -535,6 +543,9 @@ st.caption("결합 규칙(사용자 지침 v3): CANSLIM이 1차 관문, Base 목
 # ─────────────────────────────────────────────────────────── ④ 밸류에이션
 
 st.markdown("### ④ 밸류에이션")
+if a.lag_notes:
+    st.caption(f"⏱ 이 표는 재무표 기준 **{latest_actual[-1].label} 분기**까지만 반영돼 있어 한 분기 늦습니다 "
+               "(위 '업데이트 지연' 안내 참고).")
 
 header = "".join(
     f"<th style='text-align:right'>{c.label}<br>"

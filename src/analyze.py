@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from . import bands, canslim, crosscheck, dart, eps_history, fundamentals, newness as newness_mod, prices, segments as segments_mod, sec, tickers, valuation, verification as verification_mod, yahoo
+from . import bands, canslim, crosscheck, dart, eps_history, freshness, fundamentals, newness as newness_mod, prices, segments as segments_mod, sec, tickers, valuation, verification as verification_mod, yahoo
 from .fundamentals import FinancialTable, Snapshot
 from .models import CanslimResult
 from .newness import Newness
@@ -43,6 +43,7 @@ class Analysis:
     band: bands.Band | None = None
     target: bands.TargetPrice | None = None
     opinion: bands.Opinion | None = None
+    lag_notes: list[str] = field(default_factory=list)   # 반영이 늦은 항목 안내 (freshness)
 
 
 def run(query: str) -> Analysis:
@@ -155,4 +156,6 @@ def _assemble(
         band=band,
         target=target,
         opinion=opinion,
+        lag_notes=freshness.lag_notes(quarterly, canslim.c_eps_row(quarterly)[2],
+                                      usd=snap.currency == "USD"),
     )

@@ -178,6 +178,38 @@ class TestC최근분기:
         assert "[발표EPS]" not in check(result, "C1").label
         assert item(result, "C").verdict is Verdict.UNKNOWN
 
+    def test_발표_이력에_재무표보다_새_분기가_있으면_그_분기를_최근_분기로_판정한다(
+            self, snapshot, quarterly, annual, rising_stock, flat_index):
+        """재무표는 2026.03 까지, 발표 이력은 2026.06 까지 — 가장 최근 실적(2026.06)으로 C1~C3 를 본다."""
+        quarterly.rows[EPS_REPORTED] = {
+            "202412": 1116.0, "202503": 1192.0, "202506": 737.0, "202509": 1802.0,
+            "202512": 2909.0, "202603": 7123.0, "202606": 10849.0,
+        }
+        result = run(snapshot, quarterly, annual, rising_stock, flat_index)
+        c = item(result, "C")
+        assert "[발표EPS]" in check(result, "C1").label and "2026.06" in check(result, "C1").label
+        assert "+1,372.0%" in check(result, "C1").actual     # 10,849 vs 737
+        assert "2026.03" in check(result, "C2").label        # 직전 분기 = 2026.03 (7,123 vs 1,192)
+        assert "7,123원" in check(result, "C3").actual and "10,849원" in check(result, "C3").actual
+        assert "재무표에는 아직 없는 2026.06" in c.evidence
+        assert "매출(C4)은 재무표의 최신 2026.03" in c.evidence
+        assert "2026.03" in check(result, "C4").label        # 매출은 재무표 최신 분기
+
+    def test_새_분기의_전년_동기가_발표_이력에_없으면_앞당기지_않는다(
+            self, snapshot, quarterly, annual, rising_stock, flat_index):
+        quarterly.rows[EPS_REPORTED] = {"202603": 7123.0, "202606": 10849.0}   # 전년 동기 없음
+        result = run(snapshot, quarterly, annual, rising_stock, flat_index)
+        assert "2026.06" not in check(result, "C1").label
+        assert "재무표에는 아직 없는" not in item(result, "C").evidence
+
+    def test_발표_이력의_새_분기가_직전_분기와_이어지지_않으면_앞당기지_않는다(
+            self, snapshot, quarterly, annual, rising_stock, flat_index):
+        quarterly.rows[EPS_REPORTED] = {          # 2026.06 의 직전이 2025.12(6개월 전)이라 이어지지 않음
+            "202412": 1116.0, "202506": 737.0, "202512": 2909.0, "202606": 10849.0,
+        }
+        result = run(snapshot, quarterly, annual, rising_stock, flat_index)
+        assert "재무표에는 아직 없는" not in item(result, "C").evidence
+
     def test_전년比_미달이면_불합격이지만_수익증가_종목은_EPS를_보여준다(
             self, snapshot, annual, rising_stock, flat_index):
         # 2026.03 6,993 vs 2025.03 6,500 = +7.6% (C1 ✗) · 직전 2,864 → 6,993 (C3 ✓) · 매출 +69% (C4 ✓)

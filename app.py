@@ -221,11 +221,8 @@ if snap.consensus_date:
 st.caption("🗓 기준일 — " + " · ".join(_fresh_bits))
 if a.lag_notes:
     # 재무표가 새 분기를 아직 못 실었을 때 — 어떤 값이 반영됐고 어떤 값이 늦은지 눈에 띄게
-    st.warning("⏱ **" + a.lag_notes[0] + "**
-
-" + "
-
-".join("- " + n for n in a.lag_notes[1:]))
+    _lag_body = "\n".join("- " + n for n in a.lag_notes[1:])
+    st.warning(f"⏱ **{a.lag_notes[0]}**\n\n{_lag_body}")
 
 # 클로드 보고서: 같은 종목·같은 가격 기준일이면 저장본을 다시 쓴다 (버튼을 눌렀을 때만 새로 실행)
 _ai_local = ai_local.available()
